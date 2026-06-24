@@ -19,6 +19,6 @@ def transcribe_audio(file_path: str, language: str = None):
     
     return {
         "language": info.language,
-        "language_probablity": round(info.language_probability, 2),
+        "language_probability": round(info.language_probability, 2),
         "segments": result
     }

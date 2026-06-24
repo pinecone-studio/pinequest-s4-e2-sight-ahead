@@ -13,10 +13,10 @@ def download_audio(url: str) -> str:
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
-        }]
-        "quiet": True
+        }],
+        "quiet": True,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
-        
-    return output_path + "mp3"
+
+    return output_path + ".mp3"
