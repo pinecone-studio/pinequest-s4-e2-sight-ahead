@@ -11,7 +11,7 @@ CHIMEGE_TTS_KEY = os.getenv("CHIMEGE_TTS_API_KEY", "")
 CHIMEGE_TTS_URL = os.getenv("CHIMEGE_TTS_URL", "https://api.chimege.com/v1.0/synthesize")
 
 _AZURE_VOICES = {
-    "female": "mn-MN-NomindariNeural",
+    "female": "mn-MN-YesuiNeural",
     "male": "mn-MN-BataaNeural",
 }
 
