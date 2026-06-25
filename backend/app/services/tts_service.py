@@ -1,4 +1,5 @@
 import os
+import xml.sax.saxutils as saxutils
 import httpx
 from app.config import AZURE_SPEECH_KEY, AZURE_SPEECH_REGION
 
@@ -27,9 +28,10 @@ def _azure_synthesize(text: str, options: dict) -> bytes:
     gender = options.get("gender", "female")
     voice = _AZURE_VOICES.get(gender, _AZURE_VOICES["female"])
 
+    safe_text = saxutils.escape(text)
     ssml = (
         "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='mn-MN'>"
-        f"<voice name='{voice}'>{text}</voice>"
+        f"<voice name='{voice}'>{safe_text}</voice>"
         "</speak>"
     )
     resp = httpx.post(
