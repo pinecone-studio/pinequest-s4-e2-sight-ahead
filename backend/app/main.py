@@ -7,6 +7,7 @@ from app.routers.video import router as video_router
 from app.routers.translate import router as translate_router
 from app.routers.summary import router as summary_router
 from app.routers.auth import router as auth_router
+from app.routers.tts import router as tts_router
 from app.config import AUDIO_DIR
 
 app = FastAPI(title="Sightahead Backend")
@@ -25,6 +26,7 @@ app.include_router(video_router)
 app.include_router(translate_router)
 app.include_router(summary_router)
 app.include_router(auth_router)
+app.include_router(tts_router)
 
 
 @app.get("/")
