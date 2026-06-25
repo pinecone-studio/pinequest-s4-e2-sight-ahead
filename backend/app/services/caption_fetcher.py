@@ -2,6 +2,8 @@ from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, Tran
 from app.models.segment import Segment
 from app.utils.lang import normalize
 
+_api = YouTubeTranscriptApi()
+
 
 def fetch_captions(video_id: str) -> tuple[str, list[Segment]] | None:
     """
@@ -11,7 +13,7 @@ def fetch_captions(video_id: str) -> tuple[str, list[Segment]] | None:
     Language selection: English эхлээд; олдохгүй бол байгаа хэлийг авна.
     """
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_list = _api.list(video_id)
     except (TranscriptsDisabled, Exception):
         return None
 
@@ -32,9 +34,9 @@ def fetch_captions(video_id: str) -> tuple[str, list[Segment]] | None:
 
     segments = [
         Segment(
-            start=seg["start"],
-            duration=seg["duration"],
-            text=seg["text"],
+            start=seg.start,
+            duration=seg.duration,
+            text=seg.text,
             source="youtube_captions",
         )
         for seg in data
