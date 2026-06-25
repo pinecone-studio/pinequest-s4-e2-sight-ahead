@@ -12,7 +12,6 @@ def extract_video_id(url: str) -> str | None:
         match = re.search(pattern, url)
         if match:
             return match.group(1)
-    # Accept a bare 11-char video ID too
     if re.fullmatch(r'[a-zA-Z0-9_-]{11}', url):
         return url
     return None

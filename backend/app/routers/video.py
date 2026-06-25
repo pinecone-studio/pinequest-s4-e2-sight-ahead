@@ -1,4 +1,3 @@
-import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -8,19 +7,9 @@ from app.services.translator import to_mongolian
 from app.services.tts_service import synthesize
 from app.services.cache_service import get_cached_video, cache_video
 from app.utils.audio import save_audio, audio_url_path, audio_duration_ms
+from app.utils.video import extract_video_id
 
 router = APIRouter()
-
-_VIDEO_ID_RE = re.compile(r'(?:v=|youtu\.be/|embed/|shorts/)([a-zA-Z0-9_-]{11})')
-
-
-def _extract_video_id(url: str) -> str | None:
-    m = _VIDEO_ID_RE.search(url)
-    if m:
-        return m.group(1)
-    if re.fullmatch(r'[a-zA-Z0-9_-]{11}', url):
-        return url
-    return None
 
 
 class ProcessRequest(BaseModel):
@@ -29,7 +18,7 @@ class ProcessRequest(BaseModel):
 
 @router.post("/process")
 async def process_video(request: ProcessRequest):
-    video_id = _extract_video_id(request.video_id)
+    video_id = extract_video_id(request.video_id)
     if not video_id:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL or video ID")
 
