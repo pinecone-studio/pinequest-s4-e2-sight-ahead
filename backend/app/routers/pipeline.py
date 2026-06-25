@@ -7,7 +7,7 @@ routers/summary.py; this router owns the actual audio/dub generation.
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-
+from app.utils.audio import save_audio, audio_url_path, audio_duration_ms_from_bytes
 from app.services.caption_fetcher import fetch_captions
 from app.services.whisper_service import transcribe
 from app.services.translator import to_mongolian
@@ -56,8 +56,8 @@ async def process_video(request: ProcessRequest):
     result_segments = []
     for i, seg in enumerate(segments):
         audio_bytes = synthesize(seg.translated_text or seg.text)
-        path = save_audio(audio_bytes, video_id, i)
-        audio_ms = audio_duration_ms(path)
+        audio_ms = audio_duration_ms_from_bytes(audio_bytes)  # before upload
+        path = save_audio(audio_bytes, video_id, i)           # returns public URL
         seg = seg.model_copy(update={"audio_path": audio_url_path(video_id, i), "audio_ms": audio_ms})
         result_segments.append(seg.model_dump())
 

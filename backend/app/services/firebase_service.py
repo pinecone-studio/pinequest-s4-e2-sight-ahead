@@ -76,3 +76,15 @@ def verify_id_token(id_token: str) -> dict[str, Any]:
 
     get_firebase_app()
     return auth.verify_id_token(id_token)
+
+def get_storage_bucket() -> Any:
+    try:
+        from firebase_admin import storage
+    except ImportError as exc:
+        raise RuntimeError(
+            "firebase-admin is not installed. Run `pip install -r requirements.txt` "
+            "inside the backend folder."
+        ) from exc
+
+    get_firebase_app()
+    return storage.bucket()
