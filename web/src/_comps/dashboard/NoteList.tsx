@@ -5,7 +5,7 @@ import { fmtTime } from "./time"
 
 type NoteListProps = {
   notes: Note[]
-  justAdded: number | null
+  justAdded: string | null
   onJump: (time: number) => void
 }
 

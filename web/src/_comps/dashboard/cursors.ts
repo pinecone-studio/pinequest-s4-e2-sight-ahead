@@ -1,4 +1,3 @@
-// Шувууны өдөн бийр хэлбэртэй курсор. shaft = ишний өнгө.
 function quill(shaft: string): string {
   const svg =
     `<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'>` +
@@ -6,11 +5,10 @@ function quill(shaft: string): string {
     `<ellipse cx='27' cy='11' rx='5.5' ry='12' transform='rotate(42 27 11)' fill='#B86830' stroke='#F2ECD4' stroke-width='1'/>` +
     `<line x1='24' y1='12' x2='31' y2='6' stroke='#F2ECD4' stroke-width='1'/>` +
     `<circle cx='5' cy='35' r='2' fill='${shaft}'/>` +
-    `</svg>`
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 5 35, auto`
+    `</svg>`;
+
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 5 35, auto`;
 }
 
-// Бараан дэвсгэр дээр харагдах цайвар ишит өдөн бийр
-export const QUILL_LIGHT = quill("#EDE7CF")
-// Цайвар (цаасан) дэвсгэр дээр харагдах бараан ишит өдөн бийр
-export const QUILL_DARK = quill("#1B2420")
+export const QUILL_LIGHT = quill("#EDE7CF");
+export const QUILL_DARK = quill("#1B2420");

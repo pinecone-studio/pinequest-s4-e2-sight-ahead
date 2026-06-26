@@ -1,11 +1,14 @@
 export type Cue = { start: number; en: string; mn: string }
-export type Note = { id: number; time: number; text: string }
+export type Note = { id: string; time: number; text: string }
 export type HistoryItem = {
   id: string
   title: string
   speaker: string
   progress: number // 0..1
   notes: number
+  thumbnailUrl?: string
+  durationSeconds?: number
+  lastPositionMs?: number
 }
 
 // Fallbacks used only when real data is unavailable.

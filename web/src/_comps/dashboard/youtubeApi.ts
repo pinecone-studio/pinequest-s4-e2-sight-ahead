@@ -6,6 +6,7 @@ export type YouTubePlayer = {
   pauseVideo?: () => void
   playVideo?: () => void
   seekTo?: (seconds: number, allowSeekAhead: boolean) => void
+  unloadModule?: (module: string) => void
 }
 
 export type YouTubeEvent = {
@@ -20,7 +21,8 @@ export type YouTubeNamespace = {
       videoId: string
       width: string
       height: string
-      playerVars: Record<string, number>
+      host?: string
+      playerVars: Record<string, number | string>
       events: {
         onReady: (event: YouTubeEvent) => void
         onStateChange: (event: YouTubeEvent) => void

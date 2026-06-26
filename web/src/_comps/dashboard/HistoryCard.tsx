@@ -9,6 +9,8 @@ type HistoryCardProps = {
 }
 
 export function HistoryCard({ item, active, onSelect }: HistoryCardProps) {
+  const thumbnailUrl = item.thumbnailUrl || thumb(item.id)
+
   return (
     <button
       onClick={() => onSelect(item)}
@@ -16,7 +18,7 @@ export function HistoryCard({ item, active, onSelect }: HistoryCardProps) {
     >
       <div className="dashboard-history-thumb">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={thumb(item.id) || "/placeholder.svg"} alt={item.title} crossOrigin="anonymous" />
+        <img src={thumbnailUrl || "/placeholder.svg"} alt={item.title} crossOrigin="anonymous" />
         <div className="dashboard-history-progress">
           <div style={{ width: `${item.progress * 100}%` }} />
         </div>

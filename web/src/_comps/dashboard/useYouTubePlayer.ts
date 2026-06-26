@@ -12,6 +12,16 @@ export function useYouTubePlayer(videoId: string, fallbackDuration = 0) {
   const [duration, setDuration] = useState(fallbackDuration)
 
   useEffect(() => {
+    if (!videoId) {
+      queueMicrotask(() => {
+        setReady(false)
+        setPlaying(false)
+        setTime(0)
+        setDuration(fallbackDuration)
+      })
+      return
+    }
+
     let mounted = true
     const pollId = setInterval(() => {
       const player = playerRef.current
@@ -25,7 +35,18 @@ export function useYouTubePlayer(videoId: string, fallbackDuration = 0) {
         videoId,
         width: "100%",
         height: "100%",
-        playerVars: { controls: 0, modestbranding: 1, rel: 0, playsinline: 1, cc_load_policy: 0, iv_load_policy: 3, disablekb: 1, fs: 0 },
+        host: "https://www.youtube-nocookie.com",
+        playerVars: {
+          controls: 1,
+          enablejsapi: 1,
+          modestbranding: 1,
+          rel: 0,
+          playsinline: 1,
+          hl: "en",
+          cc_load_policy: 0,
+          iv_load_policy: 3,
+          fs: 1,
+        },
         events: {
           onReady: (event: YouTubeEvent) => {
             if (!mounted) return

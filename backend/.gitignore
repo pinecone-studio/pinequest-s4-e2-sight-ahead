@@ -11,3 +11,7 @@ __pycache__/
 tmp/
 audio/
 cache/
+secrets/
+*adminsdk*.json
+*firebase-admin*.json
+firebase-credentials*.json
