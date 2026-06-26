@@ -7,7 +7,7 @@ import { firebaseAuth } from "@/lib/firebase";
 //   so unauthenticated/guest requests still authenticate.
 const api = axios.create({
   baseURL: (
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "localhost:8000"
+    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"
   ).replace(/\/+$/, ""),
   withCredentials: true,
 });

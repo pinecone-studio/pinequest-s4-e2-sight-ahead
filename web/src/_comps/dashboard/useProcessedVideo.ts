@@ -22,6 +22,7 @@ export function useProcessedVideo(videoId: string) {
     let active = true;
     setLoading(true);
     setError("");
+    console.log("video started processing", videoId);
 
     processVideo(videoId)
       .then((result) => {

@@ -39,6 +39,7 @@ import type {
   YouTubeSearchResult,
   YouTubeVideoSearchResult,
 } from "@/lib/youtube-search";
+import { useProcessedVideo } from "./useProcessedVideo";
 
 export type DashboardVideoSelection = {
   url: string;
@@ -253,6 +254,13 @@ export default function DashboardView({
   }, [fallbackItem, historyItems]);
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
+  // Calls POST /process whenever a video is selected (videoId changes).
+  // `segments` is the translated transcript — displaying it is the next step.
+  const {
+    segments: processedSegments,
+    loading: processingLoading,
+    error: processingError,
+  } = useProcessedVideo(videoId);
   const reply = useMemo(() => buildScholarReply(notes), [notes]);
   const recommendationSearchQuery = useMemo(
     () => recommendationQuery(activeItem),
@@ -293,7 +301,16 @@ export default function DashboardView({
   useEffect(() => {
     playbackRef.current = { time: player.time, duration: player.duration };
   }, [player.duration, player.time]);
-  //processVideo and /process router needs to be called here on video selection
+
+  // Track the /process lifecycle in the console.
+  useEffect(() => {
+    if (processingError) {
+      console.warn("processing failed:", processingError);
+    } else if (!processingLoading && processedSegments.length) {
+      console.log(`/process done: ${processedSegments.length} segments for ${videoId}`);
+    }
+  }, [processedSegments, processingLoading, processingError, videoId]);
+
   const savePlayback = useCallback(async () => {
     if (!videoId) return;
     const { time, duration } = playbackRef.current;
@@ -369,6 +386,7 @@ export default function DashboardView({
     setSearchResults([]);
     setSearchError("");
     if (item.id === videoId) return;
+    console.log(`selected video ${item.id}`);
     onSearch?.(`https://www.youtube.com/watch?v=${item.id}`, {
       url: `https://www.youtube.com/watch?v=${item.id}`,
       title: item.title,
@@ -385,6 +403,7 @@ export default function DashboardView({
     setSearchError("");
     setSearchedQuery("");
     setQuery("");
+    console.log(`selected video ${getYouTubeVideoId(selection.url) ?? ""}`);
     onSearch?.(selection.url, selection);
   }
 
@@ -394,6 +413,7 @@ export default function DashboardView({
     setSearchResults([]);
     setSearchError("");
     setSearchedQuery("");
+    console.log(`selected video ${item.videoId}`);
     onSearch?.(selection.url, selection);
   }
 
@@ -461,6 +481,7 @@ export default function DashboardView({
       setSearchResults([]);
       setSearchError("");
       setSearchedQuery("");
+      console.log(`selected video ${directId}`);
       onSearch?.(url, { url });
       return;
     }
