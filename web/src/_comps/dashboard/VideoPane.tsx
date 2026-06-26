@@ -16,7 +16,6 @@ type VideoPaneProps = {
 
 export function VideoPane(props: VideoPaneProps) {
   const sortedNotes = [...props.notes].sort((a, b) => a.time - b.time)
-
   return (
     <section className="dashboard-video-pane">
       <div className="dashboard-video-meta">
