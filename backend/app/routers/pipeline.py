@@ -9,16 +9,18 @@ import os
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+from yt_dlp.utils import DownloadError
 
 from app.config import get_settings
+from app.utils.audio import save_audio, audio_url_path, audio_duration_ms_from_bytes
 from app.services.caption_fetcher import fetch_captions
 from app.services.whisper_service import transcribe
 from app.services.translator import to_mongolian
 from app.services.tts_service import synthesize
 from app.services.summary_service import summarize
 from app.services.cache_service import get_cached_video, cache_video
-from app.utils.audio import save_audio, audio_url_path, audio_duration_ms
 from app.utils.video import extract_video_id
+from app.models.segment import Segment
 
 router = APIRouter(tags=["pipeline"])
 
@@ -72,10 +74,20 @@ async def process_video(request: ProcessRequest):
         result_segments = []
         for i, seg in enumerate(segments):
             audio_bytes = synthesize(seg.translated_text or seg.text)
-            path = save_audio(audio_bytes, video_id, i)
-            audio_ms = audio_duration_ms(path)
+            audio_ms = audio_duration_ms_from_bytes(audio_bytes)  # before upload
+            save_audio(audio_bytes, video_id, i)                 # uploads, returns public URL
             seg = seg.model_copy(update={"audio_path": audio_url_path(video_id, i), "audio_ms": audio_ms})
             result_segments.append(seg.model_dump())
+    except DownloadError as exc:
+        # yt-dlp failed to download audio (e.g. YouTube blocking the server
+        # IP with "Sign in to confirm you're not a bot"). Raising
+        # HTTPException here (instead of letting it bubble up) keeps the
+        # error response inside CORSMiddleware so the browser gets a real
+        # CORS header instead of a bare, header-less 500.
+        raise HTTPException(
+            status_code=502,
+            detail="Could not fetch audio from YouTube",
+        ) from exc
     except Exception as exc:
         if get_settings().environment == "local":
             result = _empty_process_result(video_id)
