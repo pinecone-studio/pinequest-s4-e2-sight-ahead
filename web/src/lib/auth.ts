@@ -1,14 +1,13 @@
 "use client";
 
 import {
-  createUserWithEmailAndPassword,
   sendPasswordResetEmail,
+  signInWithCustomToken,
   signInWithEmailAndPassword,
   signOut,
-  updateProfile,
 } from "firebase/auth";
 
-import { syncFirebaseUser } from "@/lib/backend-api";
+import { registerBackendUser, syncFirebaseUser } from "@/lib/backend-api";
 import { firebaseAuth } from "@/lib/firebase";
 
 // Firebase нэвтрэлт амжилттай болсны дараа backend дээр хэрэглэгчийг үүсгэх/шинэчлэх.
@@ -24,10 +23,16 @@ export async function registerWithEmail(
   password: string,
   displayName?: string,
 ) {
-  const credential = await createUserWithEmailAndPassword(firebaseAuth, email, password);
-  if (displayName) {
-    await updateProfile(credential.user, { displayName });
-  }
+  const fallbackName = email.split("@")[0];
+  const registered = await registerBackendUser({
+    email,
+    password,
+    name: displayName?.trim() || fallbackName,
+  });
+  const credential = await signInWithCustomToken(
+    firebaseAuth,
+    registered.custom_token,
+  );
   const backendUser = await syncCurrentUser();
   return { firebaseUser: credential.user, backendUser };
 }

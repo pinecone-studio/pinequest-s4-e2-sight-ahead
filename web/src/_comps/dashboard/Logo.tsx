@@ -29,25 +29,25 @@ export function Logo() {
             width="2"
             height={h}
             rx="1"
-            fill="#d4d5d3"
+            fill="currentColor"
             opacity={0.5 + i * 0.08}
           />
         ))}
-        <polygon points="22,7 33,14 22,21" fill="#F4EED6" opacity={0.92} />
+        <polygon points="22,7 33,14 22,21" fill="currentColor" opacity={0.92} />
       </svg>
 
       <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
         <span
           style={{
-            fontFamily: "var(--font-onest), sans-serif",
+            fontFamily: "var(--dashboard-font, var(--font-body), system-ui, sans-serif)",
             fontWeight: 700,
             fontSize: 25,
             letterSpacing: "0.14em",
-            color: "#F4EED6",
+            color: "currentColor",
           }}
         >
           HELE
-          <span style={{ color: "#F4EED6", opacity: 0.75 }}>X</span>
+          <span style={{ color: "currentColor", opacity: 0.75 }}>X</span>
         </span>
       </div>
     </div>

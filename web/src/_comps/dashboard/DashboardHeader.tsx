@@ -1,5 +1,7 @@
 "use client"
 
+import { Moon, Search, Sun } from "lucide-react"
+import { useTheme } from "@/_comps/providers/ThemeProvider"
 import { Logo } from "./Logo"
 
 type DashboardHeaderProps = {
@@ -21,29 +23,21 @@ export function DashboardHeader({
   onBack,
   onLogout,
 }: DashboardHeaderProps) {
+  const { theme, toggleTheme } = useTheme()
+  const themeLabel = theme === "dark" ? "Day" : "Night"
+
   return (
-    <header
-      style={{
-        position: "relative",
-        zIndex: 3,
-        flex: "none",
-        display: "flex",
-        alignItems: "center",
-        gap: 28,
-        padding: "16px 38px",
-        borderBottom: "1px solid rgba(128,144,118,0.14)",
-      }}
-    >
+    <header className="dashboard-header">
       <button
         type="button"
         onClick={onBack}
-        title="Хайлт руу буцах"
-        aria-label="Хайлт руу буцах"
-        style={{ background: "transparent", border: 0, padding: 0, cursor: "pointer" }}
+        title="Back to search"
+        aria-label="Back to search"
+        className="dashboard-logo-button"
       >
         <Logo />
       </button>
-      <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+      <div className="dashboard-header-search">
         <div className="dashboard-search">
           <span className="dashboard-youtube-mark" aria-hidden="true">
             <svg width="9" height="11" viewBox="0 0 9 11" aria-hidden="true">
@@ -56,37 +50,35 @@ export function DashboardHeader({
             onKeyDown={(event) => {
               if (event.key === "Enter") onSubmit()
             }}
-            placeholder="YouTube видео хайх эсвэл холбоос буулгах..."
+            placeholder="Search YouTube or paste a link..."
             className="dashboard-search-input"
           />
-          <button
-            type="button"
-            onClick={onSubmit}
-            aria-label="Хайх"
-            style={{ background: "transparent", border: 0, padding: 0, cursor: "pointer", display: "flex" }}
-          >
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <circle cx="7" cy="7" r="5" stroke="#809076" strokeWidth="1.5" />
-              <line x1="11" y1="11" x2="14.5" y2="14.5" stroke="#809076" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
+          <button type="button" onClick={onSubmit} aria-label="Search" className="dashboard-search-button">
+            <Search size={15} aria-hidden="true" />
           </button>
         </div>
       </div>
       <button
+        type="button"
+        onClick={toggleTheme}
+        title={`Switch to ${themeLabel.toLowerCase()} theme`}
+        aria-label={`Switch to ${themeLabel.toLowerCase()} theme`}
+        className="dashboard-theme-toggle"
+      >
+        {theme === "dark" ? <Sun size={15} aria-hidden="true" /> : <Moon size={15} aria-hidden="true" />}
+        <span>{themeLabel}</span>
+      </button>
+      <button
+        type="button"
         onClick={onToggleEnglish}
-        title="Англи хадмалыг асаах/унтраах"
+        title="Toggle English to Mongolian subtitles"
         className={showEnglish ? "dashboard-language is-on" : "dashboard-language"}
       >
         {"EN -> MN"}
       </button>
       {onLogout && (
-        <button
-          onClick={onLogout}
-          title="Гарах"
-          aria-label="Гарах"
-          className="dashboard-language"
-        >
-          Гарах
+        <button type="button" onClick={onLogout} title="Logout" aria-label="Logout" className="dashboard-language">
+          Logout
         </button>
       )}
     </header>

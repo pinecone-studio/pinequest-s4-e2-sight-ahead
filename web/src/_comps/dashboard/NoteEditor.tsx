@@ -1,6 +1,5 @@
 "use client"
 
-import { QUILL_DARK } from "./cursors"
 import { fmtTime } from "./time"
 
 type NoteEditorProps = {
@@ -26,7 +25,6 @@ export function NoteEditor({ draft, currentTime, onDraftChange, onAddNote }: Not
         rows={2}
         placeholder="Бодлоо чөлөөтэй бичээрэй..."
         className="dashboard-note-textarea"
-        style={{ cursor: QUILL_DARK }}
       />
       <div className="dashboard-note-actions">
         <span className="dashboard-note-shortcut">Ctrl/Command + Enter дарж хадгална</span>
