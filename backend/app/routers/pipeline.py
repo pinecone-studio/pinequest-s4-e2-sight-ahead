@@ -1,249 +1,159 @@
-"""Synchronous dub pipeline: YouTube captions -> Mongolian translation -> TTS dub.
+"""Streaming dub pipeline.
 
-This is the original processing engine (caption_fetcher -> translator -> tts_service).
-The Firestore-backed CRUD/persistence layer lives in routers/video.py and
-routers/summary.py; this router owns the actual audio/dub generation.
+The YouTube transcript is fetched CLIENT-SIDE (Vercel /api/youtube/transcript)
+because datacenter IPs get blocked by YouTube. The client POSTs the raw segments
+here; we batch-translate them to Mongolian (duration-aware) and run TTS per
+segment, streaming each finished segment back over SSE with inline base64 audio
+so the UI can play it like a live dub.
 """
 
-import asyncio
+import base64
 import json
-import os
-import queue as sync_queue
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from yt_dlp.utils import DownloadError
 
-from app.config import get_settings, AUDIO_DIR
-from app.utils.audio import save_audio, audio_duration_ms_from_bytes
-from app.services.caption_fetcher import fetch_captions
-from app.services.whisper_service import transcribe
+from app.utils.audio import audio_duration_ms_from_bytes
+from app.services.translator import translate_timed
 from app.services.tts_service import synthesize
 from app.services.summary_service import summarize
-from app.services.cache_service import get_cached_video, cache_video
-from app.utils.video import extract_video_id
+from app.services.cache_service import get_cached_video, save_summary, get_latest_summary
+from app.models.entities import SummaryCreate
 from app.models.segment import Segment
 
-
-def _save_audio_with_fallback(audio_bytes: bytes, video_id: str, segment_index: int) -> str:
-    """Try Firebase Storage first; fall back to local static files on failure."""
-    try:
-        return save_audio(audio_bytes, video_id, segment_index)
-    except Exception:
-        dir_path = os.path.join(AUDIO_DIR, video_id)
-        os.makedirs(dir_path, exist_ok=True)
-        file_path = os.path.join(dir_path, f"segment_{segment_index}.mp3")
-        with open(file_path, "wb") as f:
-            f.write(audio_bytes)
-        return f"/audio/{video_id}/segment_{segment_index}.mp3"
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["pipeline"])
 
 
+class SegmentInput(BaseModel):
+    start: float = 0.0
+    duration: float = 0.0
+    text: str
+
+
 class ProcessRequest(BaseModel):
-    video_id: str
-    gender: str = "male"
+    video_id: str | None = None
+    source_lang: str = "en"
+    segments: list[SegmentInput] = []
+    gender: str = "female"
 
 
 class SummaryRequest(BaseModel):
     video_id: str
 
 
-def _empty_process_result(video_id: str) -> dict:
-    return {"video_id": video_id, "segments": []}
-
-
-def _local_processing_enabled() -> bool:
-    return os.getenv("ENABLE_LOCAL_PROCESSING", "").strip().lower() in {"1", "true", "yes"}
+def _sse(obj: dict) -> str:
+    """Format one Server-Sent Events message."""
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
 
 @router.post("/process")
 async def process_video(request: ProcessRequest):
-    video_id = extract_video_id(request.video_id)
-    if not video_id:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL or video ID")
+    segments_in = request.segments
 
-    cache_key = f"{video_id}_{request.gender}"
-    cached = get_cached_video(cache_key)
-    if cached:
-        return cached
+    # ── Log what the transcript route RECEIVED from the client ──────────
+    total_chars = sum(len(seg.text) for seg in segments_in)
+    logger.info(
+        "/process ← received transcript: video_id=%s source_lang=%s segments=%d chars=%d",
+        request.video_id,
+        request.source_lang,
+        len(segments_in),
+        total_chars,
+    )
+    if segments_in:
+        first = segments_in[0]
+        logger.debug(
+            "/process first segment: start=%.2f dur=%.2f text=%r",
+            first.start,
+            first.duration,
+            first.text[:120],
+        )
 
-    if get_settings().environment == "local" and not _local_processing_enabled():
-        result = _empty_process_result(video_id)
-        cache_video(video_id, result)
-        return result
-
-    try:
-        # PATH A: YouTube captions
-        caption_result = fetch_captions(video_id)
-
-        if caption_result:
-            source_lang, segments = caption_result
-        else:
-            # PATH B: yt-dlp + Whisper fallback
-            youtube_url = f"https://www.youtube.com/watch?v={video_id}"
-            source_lang, segments = transcribe(youtube_url)
-
-        # Translate segments in parallel
-        def translate_one(args):
-            i, seg = args
-            from app.services.translator import translate
-            if source_lang == "en":
-                mn_text = translate(seg.text, "en", "mn")
-            else:
-                en_text = translate(seg.text, source_lang, "en")
-                mn_text = translate(en_text, "en", "mn")
-            return i, seg.model_copy(update={"translated_text": mn_text})
-
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(translate_one, (i, seg)): i for i, seg in enumerate(segments)}
-            translated = [None] * len(segments)
-            for future in as_completed(futures):
-                i, seg = future.result()
-                translated[i] = seg
-        segments = translated
-
-        # TTS for each segment in parallel
-        def tts_one(args):
-            i, seg = args
-            audio_bytes = synthesize(seg.translated_text or seg.text, {"gender": request.gender})
-            audio_ms = audio_duration_ms_from_bytes(audio_bytes)
-            audio_path = _save_audio_with_fallback(audio_bytes, video_id, i)
-            return i, seg.model_copy(update={"audio_path": audio_path, "audio_ms": audio_ms})
-
-        result_segments = [None] * len(segments)
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(tts_one, (i, seg)): i for i, seg in enumerate(segments)}
-            for future in as_completed(futures):
-                i, seg = future.result()
-                result_segments[i] = seg.model_dump()
-
-    except DownloadError as exc:
+    if not segments_in:
+        logger.warning("/process ✗ rejected: no segments provided (video_id=%s)", request.video_id)
         raise HTTPException(
-            status_code=502,
-            detail="Could not fetch audio from YouTube",
-        ) from exc
-    except Exception as exc:
-        if get_settings().environment == "local":
-            result = _empty_process_result(video_id)
-            cache_video(video_id, result)
-            return result
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Video processing is temporarily unavailable.",
-        ) from exc
+            status_code=400,
+            detail="No segments provided. Send the client-fetched transcript in `segments`.",
+        )
 
-    result = {"video_id": video_id, "segments": result_segments}
-    cache_video(cache_key, result)
-    return result
+    def event_stream():
+        total = len(segments_in)
 
-
-@router.get("/process/stream")
-async def process_video_stream(video_id: str, gender: str = "male"):
-    extracted = extract_video_id(video_id)
-    if not extracted:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL or video ID")
-
-    cache_key = f"{extracted}_{gender}"
-
-    async def generate():
-        cached = get_cached_video(cache_key)
-        if cached:
-            yield f"data: {json.dumps({'step': 'ready', 'result': cached})}\n\n"
+        # 1. Batch-translate everything up front (few API calls), duration-aware.
+        logger.info("/process translating %d segments (lang=%s)", total, request.source_lang)
+        try:
+            translations = translate_timed(
+                [(seg.text, seg.duration) for seg in segments_in], request.source_lang
+            )
+            logger.info("/process translation ok: %d translations returned", len(translations))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "/process ✗ translation failed (video_id=%s, segments=%d)",
+                request.video_id,
+                total,
+            )
+            yield _sse({"error": f"translation failed: {type(exc).__name__}: {exc}"})
             return
 
-        if get_settings().environment == "local" and not _local_processing_enabled():
-            empty = _empty_process_result(extracted)
-            cache_video(cache_key, empty)
-            yield f"data: {json.dumps({'step': 'ready', 'result': empty})}\n\n"
-            return
-
-        q: sync_queue.Queue = sync_queue.Queue()
-        lock = threading.Lock()
-
-        def pipeline():
+        # 2. TTS per segment, streaming each one back as soon as it's ready.
+        tts_failures = 0
+        for i, seg in enumerate(segments_in):
+            mn_text = translations[i] if i < len(translations) else seg.text
             try:
-                caption_result = fetch_captions(extracted)
-                if caption_result:
-                    source_lang, segments = caption_result
-                else:
-                    youtube_url = f"https://www.youtube.com/watch?v={extracted}"
-                    source_lang, segments = transcribe(youtube_url)
+                audio_bytes = synthesize(mn_text, {"gender": request.gender})
+                audio_ms = audio_duration_ms_from_bytes(audio_bytes)
+                audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+            except Exception as exc:  # noqa: BLE001
+                tts_failures += 1
+                logger.exception(
+                    "/process ✗ TTS failed for segment %d/%d (%s: %s) text=%r",
+                    i,
+                    total,
+                    type(exc).__name__,
+                    exc,
+                    mn_text[:120],
+                )
+                audio_b64, audio_ms = "", 0
 
-                total = len(segments)
-                q.put({"step": "translating", "done": 0, "total": total})
+            # Log what we're SENDING back for this segment (omit the heavy b64 blob).
+            logger.debug(
+                "/process → segment %d/%d: offset=%.2f dur=%.2f audio_ms=%d translated=%r",
+                i,
+                total,
+                seg.start,
+                seg.duration,
+                audio_ms,
+                mn_text[:80],
+            )
 
-                translated = [None] * total
-                done_count = [0]
+            yield _sse(
+                {
+                    "index": i,
+                    "total": total,
+                    "segment": {
+                        "offset": seg.start,
+                        "duration": seg.duration,
+                        "text": seg.text,
+                        "translated_text": mn_text,
+                        "audio_b64": audio_b64,
+                        "audio_ms": audio_ms,
+                    },
+                }
+            )
 
-                def translate_one(args):
-                    i, seg = args
-                    from app.services.translator import translate
-                    if source_lang == "en":
-                        mn_text = translate(seg.text, "en", "mn")
-                    else:
-                        en_text = translate(seg.text, source_lang, "en")
-                        mn_text = translate(en_text, "en", "mn")
-                    result = i, seg.model_copy(update={"translated_text": mn_text})
-                    with lock:
-                        done_count[0] += 1
-                        q.put({"step": "translating", "done": done_count[0], "total": total})
-                    return result
-
-                with ThreadPoolExecutor(max_workers=8) as executor:
-                    futures = {executor.submit(translate_one, (i, seg)): i for i, seg in enumerate(segments)}
-                    for future in as_completed(futures):
-                        i, seg = future.result()
-                        translated[i] = seg
-                segments = translated
-
-                q.put({"step": "tts", "done": 0, "total": total})
-
-                result_segments = [None] * total
-                tts_done_count = [0]
-
-                def tts_one(args):
-                    i, seg = args
-                    audio_bytes = synthesize(seg.translated_text or seg.text, {"gender": gender})
-                    audio_ms = audio_duration_ms_from_bytes(audio_bytes)
-                    audio_path = _save_audio_with_fallback(audio_bytes, extracted, i)
-                    result = i, seg.model_copy(update={"audio_path": audio_path, "audio_ms": audio_ms})
-                    with lock:
-                        tts_done_count[0] += 1
-                        q.put({"step": "tts", "done": tts_done_count[0], "total": total})
-                    return result
-
-                with ThreadPoolExecutor(max_workers=8) as executor:
-                    futures = {executor.submit(tts_one, (i, seg)): i for i, seg in enumerate(segments)}
-                    for future in as_completed(futures):
-                        i, seg = future.result()
-                        result_segments[i] = seg.model_dump()
-
-                result = {"video_id": extracted, "segments": result_segments}
-                cache_video(cache_key, result)
-                q.put({"step": "ready", "result": result})
-
-            except DownloadError:
-                q.put({"step": "error", "detail": "Could not fetch audio from YouTube"})
-            except Exception as e:
-                q.put({"step": "error", "detail": str(e)})
-
-        threading.Thread(target=pipeline, daemon=True).start()
-
-        while True:
-            try:
-                event = q.get_nowait()
-                yield f"data: {json.dumps(event)}\n\n"
-                if event["step"] in ("ready", "error"):
-                    break
-            except sync_queue.Empty:
-                await asyncio.sleep(0.1)
+        logger.info(
+            "/process → done: %d segments streamed, %d TTS failures (video_id=%s)",
+            total,
+            tts_failures,
+            request.video_id,
+        )
+        yield _sse({"done": True, "total": total})
 
     return StreamingResponse(
-        generate(),
+        event_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -251,6 +161,10 @@ async def process_video_stream(video_id: str, gender: str = "male"):
 
 @router.post("/summary")
 async def get_summary(request: SummaryRequest):
+    existing = get_latest_summary(request.video_id)
+    if existing:
+        return {"video_id": request.video_id, "summary": existing.summary_text}
+
     cached = get_cached_video(request.video_id)
     if not cached:
         raise HTTPException(
@@ -259,5 +173,9 @@ async def get_summary(request: SummaryRequest):
         )
 
     segments = [Segment(**s) for s in cached.get("segments", [])]
-    summary = summarize(segments)
-    return {"video_id": request.video_id, "summary": summary}
+    summary_text = summarize(segments)
+    save_summary(
+        user_id=None,
+        payload=SummaryCreate(video_id=request.video_id, summary_text=summary_text, model_name="gemini-1.5-flash"),
+    )
+    return {"video_id": request.video_id, "summary": summary_text}

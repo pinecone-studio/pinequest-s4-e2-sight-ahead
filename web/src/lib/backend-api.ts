@@ -1,29 +1,10 @@
-import { firebaseAuth } from "@/lib/firebase";
+import { apifetch } from "./axios";
 
-const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"
-).replace(/\/+$/, "");
+// All backend calls go through `apifetch` (see lib/axios.ts): it attaches the
+// Firebase token, sends the guest-session cookie (withCredentials), returns the
+// parsed body directly, and throws with the backend's `detail` on error.
 
-// Нэвтэрсэн хэрэглэгчийн Firebase ID token-ийг бүх backend хүсэлтэд автоматаар хавсаргадаг
-// төв fetch wrapper. Энэ нь frontend талын auth "middleware"-ийн үүргийг гүйцэтгэнэ.
-export async function authFetch(
-  path: string,
-  init: RequestInit = {},
-): Promise<Response> {
-  const headers = new Headers(init.headers);
-  const user = firebaseAuth.currentUser;
-  if (user) {
-    const token = await user.getIdToken();
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-  // Always send the guest-session cookie too, so requests still authenticate
-  // when there's no signed-in Firebase user (see createGuestSession below).
-  return fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers,
-    credentials: init.credentials ?? "include",
-  });
-}
+// ===== Types =====
 
 export type UserProfile = {
   id: string;
@@ -75,50 +56,6 @@ export type NoteRecord = {
   updated_at: string;
 };
 
-async function readErrorDetail(response: Response) {
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    const payload = await response.json().catch(() => null);
-    if (payload && typeof payload.detail === "string") {
-      return payload.detail;
-    }
-  }
-  return response.text();
-}
-
-export async function registerBackendUser(payload: {
-  email: string;
-  password: string;
-  name?: string;
-}): Promise<RegisterResponse> {
-  const response = await fetch(`${API_BASE_URL}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(detail || "Registration failed");
-  }
-
-  return response.json();
-}
-
-export async function createDemoBackendSession(): Promise<RegisterResponse> {
-  const response = await fetch(`${API_BASE_URL}/auth/demo`, {
-    method: "POST",
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(detail || "Demo login failed");
-  }
-
-  return response.json();
-}
-
 export type Segment = {
   start: number;
   duration: number;
@@ -134,136 +71,78 @@ export type ProcessResult = {
   segments: Segment[];
 };
 
-export async function syncFirebaseUser(idToken: string): Promise<UserProfile> {
-  const response = await fetch(`${API_BASE_URL}/auth/sync`, {
+// ===== Auth =====
+
+export function registerBackendUser(payload: {
+  email: string;
+  password: string;
+  name?: string;
+}): Promise<RegisterResponse> {
+  return apifetch<RegisterResponse>("/auth/register", { method: "POST", data: payload });
+}
+
+// Demo login: backend creates/returns a shared demo account (RegisterResponse).
+export function createDemoBackendSession(): Promise<RegisterResponse> {
+  return apifetch<RegisterResponse>("/auth/demo", { method: "POST" });
+}
+
+export function syncFirebaseUser(idToken: string): Promise<UserProfile> {
+  // Pass the token explicitly: right after sign-in firebaseAuth.currentUser may
+  // not be populated yet, so don't rely on the interceptor here.
+  return apifetch<UserProfile>("/auth/sync", {
     method: "POST",
-    credentials: "include",
-    headers: {
-      Authorization: `Bearer ${idToken}`,
-    },
+    headers: { Authorization: `Bearer ${idToken}` },
   });
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(`Backend auth sync failed: ${detail}`);
-  }
-
-  return response.json();
 }
 
-// Creates a guest/tester session: backend issues an httponly session cookie
-// and we get back a guest UserProfile. Used whenever Firebase auth isn't
-// available or fails, so the app stays usable without signing in.
-export async function createGuestSession(): Promise<UserProfile> {
-  const response = await fetch(`${API_BASE_URL}/auth/guest`, {
-    method: "POST",
-    credentials: "include",
-  });
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(`Guest session creation failed: ${detail}`);
-  }
-
-  return response.json();
+// Creates a guest/tester session WITHOUT registration: the backend issues an
+// httponly session cookie and returns a guest UserProfile. This is how the app
+// stays usable without signing up — call it on landing / "Continue as guest".
+export function createGuestSession(): Promise<UserProfile> {
+  return apifetch<UserProfile>("/auth/guest", { method: "POST" });
 }
 
-export async function fetchWatchHistory(limit = 30): Promise<VideoHistoryRecord[]> {
-  const response = await authFetch(`/videos/history?limit=${limit}`);
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(detail || "Watch history failed");
-  }
-
-  return response.json();
+// Restores whichever session is active: a Firebase ID token (passed in) or the
+// session_id cookie set by createGuestSession. Throws (401) if neither is valid.
+export function getCurrentUser(idToken?: string): Promise<UserProfile> {
+  return apifetch<UserProfile>(
+    "/auth/me",
+    idToken ? { headers: { Authorization: `Bearer ${idToken}` } } : {},
+  );
 }
 
-export async function recordWatchHistory(
+// ===== Watch history =====
+
+export function fetchWatchHistory(limit = 30): Promise<VideoHistoryRecord[]> {
+  return apifetch<VideoHistoryRecord[]>("/videos/history", { params: { limit } });
+}
+
+export function recordWatchHistory(
   payload: VideoHistoryPayload,
 ): Promise<VideoHistoryRecord> {
-  const response = await authFetch("/videos/history", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(detail || "Watch history update failed");
-  }
-
-  return response.json();
+  return apifetch<VideoHistoryRecord>("/videos/history", { method: "POST", data: payload });
 }
 
-// Restores whichever session is active: a Firebase ID token (pass it in
-// when a Firebase user is signed in client-side) or the session_id cookie
-// set by createGuestSession. Throws (401) if neither is present/valid.
-export async function getCurrentUser(idToken?: string): Promise<UserProfile> {
-  const headers: HeadersInit = {};
-  if (idToken) {
-    headers.Authorization = `Bearer ${idToken}`;
-  }
+// ===== Notes =====
 
-  const response = await fetch(`${API_BASE_URL}/auth/me`, {
-    credentials: "include",
-    headers,
-  });
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(`Fetching current user failed: ${detail}`);
-  }
-
-  return response.json();
+export function fetchVideoNotes(videoId: string): Promise<NoteRecord[]> {
+  return apifetch<NoteRecord[]>(`/videos/${videoId}/notes`);
 }
 
-export async function fetchVideoNotes(videoId: string): Promise<NoteRecord[]> {
-  const response = await authFetch(`/videos/${videoId}/notes`);
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(detail || "Notes fetch failed");
-  }
-
-  return response.json();
-}
-
-export async function createVideoNote(
+export function createVideoNote(
   videoId: string,
   timestampMs: number,
   content: string,
 ): Promise<NoteRecord> {
-  const response = await authFetch(`/videos/${videoId}/notes`, {
+  return apifetch<NoteRecord>(`/videos/${videoId}/notes`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      video_id: videoId,
-      timestamp_ms: timestampMs,
-      content,
-    }),
+    data: { video_id: videoId, timestamp_ms: timestampMs, content },
   });
-
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(detail || "Note save failed");
-  }
-
-  return response.json();
 }
 
-export async function processVideo(videoId: string, gender: "male" | "female" = "male"): Promise<ProcessResult> {
-  const response = await authFetch(`/process`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ video_id: videoId, gender }),
-  });
+// ===== Dub pipeline =====
 
-  if (!response.ok) {
-    const detail = await readErrorDetail(response);
-    throw new Error(`Video processing failed: ${detail}`);
-  }
-
-  return response.json();
+export function processVideo(videoId: string): Promise<ProcessResult> {
+  // Backend expects ProcessRequest{ video_id } — snake_case.
+  return apifetch<ProcessResult>("/process", { method: "POST", data: { video_id: videoId } });
 }

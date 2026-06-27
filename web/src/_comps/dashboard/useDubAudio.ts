@@ -1,9 +1,15 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import type { Segment } from "@/lib/backend-api"
+import { fetchTranscript, streamProcess, base64ToBlobUrl, type StreamedSegment } from "@/lib/process-stream"
 
-export type DubStep = "idle" | "translating" | "tts" | "ready" | "error"
+export type DubStep = "idle" | "fetching" | "translating" | "tts" | "ready" | "error"
+
+type DubSegment = {
+  start: number
+  duration: number
+  blobUrl: string | null
+}
 
 export function useDubAudio(
   videoId: string,
@@ -12,95 +18,120 @@ export function useDubAudio(
   gender: "male" | "female",
   playbackRate: number = 1,
 ) {
-  const [segments, setSegments] = useState<Segment[]>([])
+  const [segments, setSegments] = useState<DubSegment[]>([])
   const [step, setStep] = useState<DubStep>("idle")
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const activeIdxRef = useRef<number>(-1)
-  const esRef = useRef<EventSource | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const blobUrlsRef = useRef<string[]>([])
 
-  // Unmount cleanup
   useEffect(() => {
     return () => {
       audioRef.current?.pause()
       audioRef.current = null
-      esRef.current?.close()
-      esRef.current = null
+      abortRef.current?.abort()
+      blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
     }
   }, [])
 
-  // Fetch segments via SSE when dub mode is turned on or gender changes
+  // Fetch transcript + stream translate/TTS when enabled or gender changes
   useEffect(() => {
     if (!videoId || !enabled) return
 
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current = null
-    }
-    activeIdxRef.current = -1
-    esRef.current?.close()
-    esRef.current = null
-    setSegments([])
-    setError(null)
-    setProgress(null)
-    setStep("translating")
-
-    const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "")
-    const url = `${apiBase}/process/stream?video_id=${encodeURIComponent(videoId)}&gender=${gender}`
-    const es = new EventSource(url)
-    esRef.current = es
-
-    es.onmessage = (event) => {
-      const data = JSON.parse(event.data as string)
-      if (data.step === "translating" || data.step === "tts") {
-        setStep(data.step)
-        setProgress({ done: data.done, total: data.total })
-      } else if (data.step === "ready") {
-        setSegments(data.result.segments)
-        setStep("ready")
-        setProgress(null)
-        es.close()
-        esRef.current = null
-      } else if (data.step === "error") {
-        setError(data.detail ?? "Дуб бэлдэхэд алдаа гарлаа")
-        setStep("error")
-        setProgress(null)
-        es.close()
-        esRef.current = null
-      }
-    }
-
-    es.onerror = () => {
-      setError("Серверт холбогдоход алдаа гарлаа")
-      setStep("error")
-      setProgress(null)
-      es.close()
-      esRef.current = null
-    }
-
-    return () => {
-      es.close()
-      if (esRef.current === es) esRef.current = null
-    }
-  }, [videoId, enabled, gender])
-
-  // Stop and clear when dub mode is turned off
-  useEffect(() => {
-    if (enabled) return
-    esRef.current?.close()
-    esRef.current = null
     audioRef.current?.pause()
     audioRef.current = null
     activeIdxRef.current = -1
+    abortRef.current?.abort()
+    blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+    blobUrlsRef.current = []
+    setSegments([])
+    setError(null)
+    setProgress(null)
+    setStep("fetching")
+
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    void (async () => {
+      try {
+        const transcript = await fetchTranscript(videoId)
+        if (controller.signal.aborted) return
+
+        if (!transcript.segments.length) {
+          setError("No transcript available for this video.")
+          setStep("error")
+          return
+        }
+
+        const total = transcript.segments.length
+        const built: DubSegment[] = transcript.segments.map((s) => ({
+          start: s.start,
+          duration: s.duration,
+          blobUrl: null,
+        }))
+        setStep("translating")
+        setProgress({ done: 0, total })
+
+        await streamProcess(
+          { source_lang: transcript.source_lang, segments: transcript.segments, gender },
+          {
+            onSegment: (seg: StreamedSegment, index: number, segTotal: number) => {
+              if (controller.signal.aborted) return
+              const blobUrl = seg.audio_b64 ? base64ToBlobUrl(seg.audio_b64) : null
+              if (blobUrl) blobUrlsRef.current.push(blobUrl)
+              built[index] = { start: seg.offset, duration: seg.duration, blobUrl }
+              setSegments([...built])
+              setProgress({ done: index + 1, total: segTotal })
+              if (index === 0) setStep("tts")
+            },
+            onDone: () => {
+              if (controller.signal.aborted) return
+              setStep("ready")
+              setProgress(null)
+            },
+            onError: (msg: string) => {
+              if (controller.signal.aborted) return
+              setError(msg)
+              setStep("error")
+              setProgress(null)
+            },
+          },
+          controller.signal,
+        )
+      } catch (err) {
+        if (controller.signal.aborted) return
+        setError(err instanceof Error ? err.message : "Дуб бэлдэхэд алдаа гарлаа")
+        setStep("error")
+        setProgress(null)
+      }
+    })()
+
+    return () => {
+      controller.abort()
+      if (abortRef.current === controller) abortRef.current = null
+    }
+  }, [videoId, enabled, gender])
+
+  // Clear everything when dub mode is turned off
+  useEffect(() => {
+    if (enabled) return
+    abortRef.current?.abort()
+    abortRef.current = null
+    audioRef.current?.pause()
+    audioRef.current = null
+    activeIdxRef.current = -1
+    blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+    blobUrlsRef.current = []
     setSegments([])
     setError(null)
     setProgress(null)
     setStep("idle")
   }, [enabled])
 
-  // Apply playback rate changes to the currently playing audio
+  // Apply playback rate changes to currently playing audio
   useEffect(() => {
     if (audioRef.current) audioRef.current.playbackRate = playbackRate
   }, [playbackRate])
@@ -118,7 +149,6 @@ export function useDubAudio(
       return
     }
 
-    // Same segment — only resync if >0.5s drift
     if (idx === activeIdxRef.current && audioRef.current) {
       const expected = currentTime - segments[idx].start
       if (Math.abs(audioRef.current.currentTime - expected) > 0.5) {
@@ -127,21 +157,14 @@ export function useDubAudio(
       return
     }
 
-    // New segment — stop old, start new
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.src = ""
-      audioRef.current = null
-    }
+    audioRef.current?.pause()
+    audioRef.current = null
 
     const seg = segments[idx]
     activeIdxRef.current = idx
-    if (!seg.audio_path) return
+    if (!seg.blobUrl) return
 
-    const audioUrl = seg.audio_path.startsWith("http")
-      ? seg.audio_path
-      : `${(process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "")}${seg.audio_path}`
-    const audio = new Audio(audioUrl)
+    const audio = new Audio(seg.blobUrl)
     audio.currentTime = Math.max(0, currentTime - seg.start)
     audio.playbackRate = playbackRate
     audioRef.current = audio

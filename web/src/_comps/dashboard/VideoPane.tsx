@@ -1,6 +1,6 @@
 "use client"
 
-import type { RefObject } from "react"
+import type { ReactNode, RefObject } from "react"
 import { SOURCE_LINE, type Note } from "./data"
 import { VideoFrame } from "./VideoFrame"
 import type { DubStep } from "./useDubAudio"
@@ -13,6 +13,7 @@ type VideoPaneProps = {
   title: string
   speaker: string
   sourceLine?: string
+  subtitle?: ReactNode
   dubMode?: "mongolian" | "original"
   dubStatus?: DubStep
   dubProgress?: { done: number; total: number } | null
@@ -24,6 +25,7 @@ type VideoPaneProps = {
 
 function statusText(status: DubStep | undefined, progress: { done: number; total: number } | null | undefined): string {
   if (!status) return ""
+  if (status === "fetching") return "Caption татаж байна..."
   if (status === "translating") {
     return progress ? `OpenAI орчуулж байна... ${progress.done}/${progress.total}` : "OpenAI орчуулж байна..."
   }
@@ -36,7 +38,7 @@ function statusText(status: DubStep | undefined, progress: { done: number; total
 
 export function VideoPane(props: VideoPaneProps) {
   const sortedNotes = [...props.notes].sort((a, b) => a.time - b.time)
-  const isLoading = props.dubStatus === "translating" || props.dubStatus === "tts"
+  const isLoading = props.dubStatus === "fetching" || props.dubStatus === "translating" || props.dubStatus === "tts"
   const isMongolian = props.dubMode === "mongolian"
   const dubStatusText = statusText(props.dubStatus, props.dubProgress)
 
@@ -53,6 +55,7 @@ export function VideoPane(props: VideoPaneProps) {
         ready={props.ready}
         hasVideo={props.hasVideo}
       />
+      {props.subtitle}
       {props.hasVideo && props.onToggleDub && (
         <div className="dashboard-dub-toggle">
           <div className="dashboard-dub-buttons">
@@ -80,17 +83,20 @@ export function VideoPane(props: VideoPaneProps) {
             )}
           </div>
 
-          {isLoading && props.dubProgress && props.dubProgress.total > 0 && (
-            <div className="dashboard-dub-progress">
-              <div className="dashboard-dub-progress-track">
-                <div
-                  className="dashboard-dub-progress-fill"
-                  style={{ width: `${Math.round((props.dubProgress.done / props.dubProgress.total) * 100)}%` }}
-                />
+          {isLoading && props.dubProgress != null && props.dubProgress.total > 0 && (() => {
+            const dp = props.dubProgress!
+            return (
+              <div className="dashboard-dub-progress">
+                <div className="dashboard-dub-progress-track">
+                  <div
+                    className="dashboard-dub-progress-fill"
+                    style={{ width: `${Math.round((dp.done / dp.total) * 100)}%` }}
+                  />
+                </div>
+                <span className="dashboard-dub-status">{dubStatusText}</span>
               </div>
-              <span className="dashboard-dub-status">{dubStatusText}</span>
-            </div>
-          )}
+            )
+          })()}
 
           {!isLoading && dubStatusText && (
             <span className="dashboard-dub-status">{dubStatusText}</span>
