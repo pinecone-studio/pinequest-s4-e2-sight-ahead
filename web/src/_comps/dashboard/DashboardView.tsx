@@ -8,7 +8,10 @@ import {
   type HistoryItem,
   type Note,
 } from "@/_comps/dashboard/data";
-import { CollapsedHistoryRail, HistoryRail } from "@/_comps/dashboard/HistoryRail";
+import {
+  CollapsedHistoryRail,
+  HistoryRail,
+} from "@/_comps/dashboard/HistoryRail";
 import { NotesPane } from "@/_comps/dashboard/NotesPane";
 import { RecommendedVideos } from "@/_comps/dashboard/RecommendedVideos";
 import { ScholarOverlay } from "@/_comps/dashboard/ScholarOverlay";
@@ -32,7 +35,11 @@ import {
   type VideoHistoryPayload,
   type VideoHistoryRecord,
 } from "@/lib/backend-api";
-import type { YouTubeSearchResult, YouTubeVideoSearchResult } from "@/lib/youtube-search";
+import type {
+  YouTubeSearchResult,
+  YouTubeVideoSearchResult,
+} from "@/lib/youtube-search";
+import { useProcessedVideo } from "./useProcessedVideo";
 
 export type DashboardVideoSelection = {
   url: string;
@@ -89,7 +96,9 @@ function parseDurationSeconds(value: string) {
   return parts.reduce((total, part) => total * 60 + part, 0);
 }
 
-function selectionFromResult(item: YouTubeVideoSearchResult): DashboardVideoSelection {
+function selectionFromResult(
+  item: YouTubeVideoSearchResult,
+): DashboardVideoSelection {
   return {
     url: item.url,
     title: item.title,
@@ -126,11 +135,16 @@ function historyPayload(
     last_position_ms: Math.floor(time * 1000),
     watched_seconds: Math.floor(time),
     completed: duration > 0 ? time / duration >= 0.95 : false,
-    youtube_url: selection?.url || videoUrl || `https://www.youtube.com/watch?v=${videoId}`,
+    youtube_url:
+      selection?.url ||
+      videoUrl ||
+      `https://www.youtube.com/watch?v=${videoId}`,
     title: selection?.title,
     channel_name: selection?.channelTitle,
     thumbnail_url: selection?.thumbnailUrl,
-    duration_seconds: selection?.durationSeconds || (duration > 0 ? Math.floor(duration) : undefined),
+    duration_seconds:
+      selection?.durationSeconds ||
+      (duration > 0 ? Math.floor(duration) : undefined),
   };
 }
 
@@ -164,7 +178,9 @@ export default function DashboardView({
   const [searchResults, setSearchResults] = useState<YouTubeSearchResult[]>([]);
   const [searchError, setSearchError] = useState("");
   const [isSearching, setIsSearching] = useState(false);
-  const [recommendedVideos, setRecommendedVideos] = useState<YouTubeVideoSearchResult[]>([]);
+  const [recommendedVideos, setRecommendedVideos] = useState<
+    YouTubeVideoSearchResult[]
+  >([]);
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [recommendationsError, setRecommendationsError] = useState("");
   const playbackRef = useRef({ time: 0, duration: 0 });
@@ -176,7 +192,9 @@ export default function DashboardView({
       const records = await fetchWatchHistory();
       setHistoryItems(records.map(toHistoryItem));
     } catch (error) {
-      setHistoryError(error instanceof Error ? error.message : "History failed to load.");
+      setHistoryError(
+        error instanceof Error ? error.message : "History failed to load.",
+      );
     } finally {
       setHistoryLoading(false);
     }
@@ -186,7 +204,9 @@ export default function DashboardView({
     const item = toHistoryItem(record);
     setHistoryItems((previous) => {
       const existing = previous.find((entry) => entry.id === item.id);
-      const nextItem = existing ? { ...item, notes: Math.max(item.notes, existing.notes) } : item;
+      const nextItem = existing
+        ? { ...item, notes: Math.max(item.notes, existing.notes) }
+        : item;
       return [nextItem, ...previous.filter((entry) => entry.id !== item.id)];
     });
   }, []);
@@ -219,24 +239,40 @@ export default function DashboardView({
   }, [videoId]);
 
   const currentHistoryItem = historyItems.find((item) => item.id === videoId);
-  const fallbackItem = videoId ? historyItemFromSelection(videoId, selectedVideo) : null;
+  const fallbackItem = videoId
+    ? historyItemFromSelection(videoId, selectedVideo)
+    : null;
   const activeItem = currentHistoryItem ?? fallbackItem;
   const visibleHistoryItems = useMemo(() => {
-    if (!fallbackItem || historyItems.some((item) => item.id === fallbackItem.id)) {
+    if (
+      !fallbackItem ||
+      historyItems.some((item) => item.id === fallbackItem.id)
+    ) {
       return historyItems;
     }
     return [fallbackItem, ...historyItems];
   }, [fallbackItem, historyItems]);
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
+  // Calls POST /process whenever a video is selected (videoId changes).
+  // `segments` is the translated transcript — displaying it is the next step.
+  const {
+    segments: processedSegments,
+    loading: processingLoading,
+    error: processingError,
+  } = useProcessedVideo(videoId);
   const reply = useMemo(() => buildScholarReply(notes), [notes]);
-  const recommendationSearchQuery = useMemo(() => recommendationQuery(activeItem), [activeItem]);
+  const recommendationSearchQuery = useMemo(
+    () => recommendationQuery(activeItem),
+    [activeItem],
+  );
   const searchCounts = useMemo(
     () => ({
       videos: searchResults.filter((item) => item.kind === "video").length,
       live: searchResults.filter((item) => item.kind === "live").length,
       channels: searchResults.filter((item) => item.kind === "channel").length,
-      playlists: searchResults.filter((item) => item.kind === "playlist").length,
+      playlists: searchResults.filter((item) => item.kind === "playlist")
+        .length,
       shorts: searchResults.filter(isShortLikeVideo).length,
       podcasts: searchResults.filter(isPodcastLikeItem).length,
     }),
@@ -253,13 +289,27 @@ export default function DashboardView({
         .join(" "),
     [historyCollapsed, notesCollapsed],
   );
-  const visibleRecommendedVideos = recommendationSearchQuery ? recommendedVideos : [];
-  const visibleRecommendationsLoading = Boolean(recommendationSearchQuery) && recommendationsLoading;
-  const visibleRecommendationsError = recommendationSearchQuery ? recommendationsError : "";
+  const visibleRecommendedVideos = recommendationSearchQuery
+    ? recommendedVideos
+    : [];
+  const visibleRecommendationsLoading =
+    Boolean(recommendationSearchQuery) && recommendationsLoading;
+  const visibleRecommendationsError = recommendationSearchQuery
+    ? recommendationsError
+    : "";
 
   useEffect(() => {
     playbackRef.current = { time: player.time, duration: player.duration };
   }, [player.duration, player.time]);
+
+  // Track the /process lifecycle in the console.
+  useEffect(() => {
+    if (processingError) {
+      console.warn("processing failed:", processingError);
+    } else if (!processingLoading && processedSegments.length) {
+      console.log(`/process done: ${processedSegments.length} segments for ${videoId}`);
+    }
+  }, [processedSegments, processingLoading, processingError, videoId]);
 
   const savePlayback = useCallback(async () => {
     if (!videoId) return;
@@ -268,6 +318,9 @@ export default function DashboardView({
       const record = await recordWatchHistory(
         historyPayload(videoId, videoUrl, selectedVideo, time, duration),
       );
+      if (selectedVideo) {
+        console.log(selectedVideo.title);
+      }
       upsertHistoryRecord(record);
     } catch (error) {
       console.warn("Watch history failed to save:", error);
@@ -312,7 +365,11 @@ export default function DashboardView({
     if (!text) return;
 
     try {
-      const record = await createVideoNote(videoId, Math.floor(player.time * 1000), text);
+      const record = await createVideoNote(
+        videoId,
+        Math.floor(player.time * 1000),
+        text,
+      );
       const note = toNote(record);
       setNotes((previous) => [...previous, note]);
       setDraft("");
@@ -329,6 +386,7 @@ export default function DashboardView({
     setSearchResults([]);
     setSearchError("");
     if (item.id === videoId) return;
+    console.log(`selected video ${item.id}`);
     onSearch?.(`https://www.youtube.com/watch?v=${item.id}`, {
       url: `https://www.youtube.com/watch?v=${item.id}`,
       title: item.title,
@@ -345,6 +403,7 @@ export default function DashboardView({
     setSearchError("");
     setSearchedQuery("");
     setQuery("");
+    console.log(`selected video ${getYouTubeVideoId(selection.url) ?? ""}`);
     onSearch?.(selection.url, selection);
   }
 
@@ -354,6 +413,7 @@ export default function DashboardView({
     setSearchResults([]);
     setSearchError("");
     setSearchedQuery("");
+    console.log(`selected video ${item.videoId}`);
     onSearch?.(selection.url, selection);
   }
 
@@ -379,7 +439,11 @@ export default function DashboardView({
 
         const unique = new Map<string, YouTubeVideoSearchResult>();
         results.forEach((item) => {
-          if (!isVideoResult(item) || item.videoId === videoId || unique.has(item.videoId)) {
+          if (
+            !isVideoResult(item) ||
+            item.videoId === videoId ||
+            unique.has(item.videoId)
+          ) {
             return;
           }
           unique.set(item.videoId, item);
@@ -390,7 +454,9 @@ export default function DashboardView({
         if (!active || controller.signal.aborted) return;
         setRecommendedVideos([]);
         setRecommendationsError(
-          error instanceof Error ? error.message : "YouTube recommendations failed.",
+          error instanceof Error
+            ? error.message
+            : "YouTube recommendations failed.",
         );
       } finally {
         if (active) setRecommendationsLoading(false);
@@ -415,6 +481,7 @@ export default function DashboardView({
       setSearchResults([]);
       setSearchError("");
       setSearchedQuery("");
+      console.log(`selected video ${directId}`);
       onSearch?.(url, { url });
       return;
     }
@@ -437,7 +504,9 @@ export default function DashboardView({
       }
     } catch (error) {
       setSearchResults([]);
-      setSearchError(error instanceof Error ? error.message : "YouTube search failed.");
+      setSearchError(
+        error instanceof Error ? error.message : "YouTube search failed.",
+      );
     } finally {
       setIsSearching(false);
     }
@@ -458,8 +527,12 @@ export default function DashboardView({
       />
       {(isSearching || searchError || searchResults.length > 0) && (
         <div className="dashboard-search-results-panel">
-          {isSearching && <div className="dashboard-search-status">Searching YouTube...</div>}
-          {!isSearching && searchError && <div className="dashboard-search-status">{searchError}</div>}
+          {isSearching && (
+            <div className="dashboard-search-status">Searching YouTube...</div>
+          )}
+          {!isSearching && searchError && (
+            <div className="dashboard-search-status">{searchError}</div>
+          )}
           {!isSearching && searchResults.length > 0 && (
             <SearchResults
               query={searchedQuery}
@@ -516,7 +589,11 @@ export default function DashboardView({
           />
         )}
       </div>
-      <ScholarOverlay open={summaryOpen} reply={reply} onClose={() => setSummaryOpen(false)} />
+      <ScholarOverlay
+        open={summaryOpen}
+        reply={reply}
+        onClose={() => setSummaryOpen(false)}
+      />
     </div>
   );
 }

@@ -1,26 +1,28 @@
 """Synchronous dub pipeline: YouTube captions -> Mongolian translation -> TTS dub.
 
-This is the original processing engine (caption_fetcher -> translator -> tts_service).
-The Firestore-backed CRUD/persistence layer lives in routers/video.py and
-routers/summary.py; this router owns the actual audio/dub generation.
+PATH A only (youtube_transcript_api captions). The yt-dlp + Whisper audio
+fallback (Path B) has been removed: it needs heavy ML deps and gets IP-blocked
+by YouTube on datacenter hosts anyway. If a video has no captions, /process
+returns 422.
 """
 
+import logging
 import os
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from yt_dlp.utils import DownloadError
 
 from app.config import get_settings
-from app.utils.audio import save_audio, audio_url_path, audio_duration_ms_from_bytes
+from app.utils.audio import save_audio, audio_duration_ms_from_bytes
 from app.services.caption_fetcher import fetch_captions
-from app.services.whisper_service import transcribe
 from app.services.translator import to_mongolian
 from app.services.tts_service import synthesize
 from app.services.summary_service import summarize
 from app.services.cache_service import get_cached_video, cache_video
 from app.utils.video import extract_video_id
 from app.models.segment import Segment
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["pipeline"])
 
@@ -57,38 +59,32 @@ async def process_video(request: ProcessRequest):
         return result
 
     try:
-        # PATH A: YouTube captions
+        # PATH A only: YouTube captions (youtube_transcript_api).
         caption_result = fetch_captions(video_id)
+        if not caption_result:
+            raise HTTPException(
+                status_code=422,
+                detail="No captions available for this video.",
+            )
+        source_lang, segments = caption_result
+        logger.info("caption found: %s (%d segments, lang=%s)", video_id, len(segments), source_lang)
 
-        if caption_result:
-            source_lang, segments = caption_result
-        else:
-            # PATH B: yt-dlp + Whisper fallback
-            youtube_url = f"https://www.youtube.com/watch?v={video_id}"
-            source_lang, segments = transcribe(youtube_url)
-
-        # Translate to Mongolian
+        # Translate to Mongolian (batched — few API calls, not one per segment).
+        logger.info("translating: %s", video_id)
         segments = to_mongolian(segments, source_lang)
 
-        # TTS for each segment
+        # TTS (dub) for each segment -> upload to Firebase Storage.
         result_segments = []
         for i, seg in enumerate(segments):
             audio_bytes = synthesize(seg.translated_text or seg.text)
             audio_ms = audio_duration_ms_from_bytes(audio_bytes)  # before upload
-            save_audio(audio_bytes, video_id, i)                 # uploads, returns public URL
-            seg = seg.model_copy(update={"audio_path": audio_url_path(video_id, i), "audio_ms": audio_ms})
+            audio_url = save_audio(audio_bytes, video_id, i)      # public Storage URL
+            seg = seg.model_copy(update={"audio_path": audio_url, "audio_ms": audio_ms})
             result_segments.append(seg.model_dump())
-    except DownloadError as exc:
-        # yt-dlp failed to download audio (e.g. YouTube blocking the server
-        # IP with "Sign in to confirm you're not a bot"). Raising
-        # HTTPException here (instead of letting it bubble up) keeps the
-        # error response inside CORSMiddleware so the browser gets a real
-        # CORS header instead of a bare, header-less 500.
-        raise HTTPException(
-            status_code=502,
-            detail="Could not fetch audio from YouTube",
-        ) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
+        logger.exception("processing failed for %s", video_id)
         if get_settings().environment == "local":
             result = _empty_process_result(video_id)
             cache_video(video_id, result)
