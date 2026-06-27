@@ -16,8 +16,14 @@
 //
 // Strategies, in order:
 //   1. InnerTube ANDROID  — primary; smart ASR-first track selection
-//   2. youtube-transcript  — independent fallback (uses InnerTube internally too)
-//   3. Watch-page scrape   — last resort track discovery
+//   2. InnerTube iOS       — different client, may pass when ANDROID is flagged
+//   3. youtube-transcript  — independent fallback (uses InnerTube internally too)
+//   4. Watch-page scrape   — last resort track discovery
+//
+// CAVEAT: all of these run from the server's IP. If YouTube hard-flags that IP
+// with a bot check (playabilityStatus LOGIN_REQUIRED, "Sign in to confirm you're
+// not a bot"), there's no pure server-side fix without PO tokens / a residential
+// proxy — that's the failure the browser extension (residential IP) sidesteps.
 
 import { YoutubeTranscript } from "youtube-transcript";
 
@@ -31,10 +37,33 @@ export type CaptionResult = {
   strategy: string; // which method succeeded (for diagnostics/logging)
 };
 
-// ── InnerTube client config (matches a real ANDROID app request) ────────────
+// ── InnerTube client configs ────────────────────────────────────────────────
+// We try real mobile-app clients. Attaching a freshly-fetched `visitorData`
+// makes the request look like a genuine session and reduces (does not eliminate)
+// the "Sign in to confirm you're not a bot" (LOGIN_REQUIRED) bot check that
+// YouTube throws at flagged / datacenter IPs.
 const INNERTUBE_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
-const INNERTUBE_CLIENT_VERSION = "20.10.38";
-const INNERTUBE_UA = `com.google.android.youtube/${INNERTUBE_CLIENT_VERSION} (Linux; U; Android 14)`;
+
+type InnertubeClient = {
+  clientName: string;
+  clientVersion: string;
+  userAgent: string;
+  extra?: Record<string, unknown>;
+};
+
+const INNERTUBE_CLIENTS: Record<"android" | "ios", InnertubeClient> = {
+  android: {
+    clientName: "ANDROID",
+    clientVersion: "20.10.38",
+    userAgent: "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip",
+  },
+  ios: {
+    clientName: "IOS",
+    clientVersion: "20.10.4",
+    userAgent: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_1 like Mac OS X)",
+    extra: { deviceModel: "iPhone16,2" },
+  },
+};
 
 const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -57,7 +86,8 @@ type CaptionTrack = {
 // (listing what each strategy reported) only if ALL of them fail.
 export async function fetchCaptions(videoId: string, lang = "en"): Promise<CaptionResult> {
   const strategies: Array<{ name: string; run: () => Promise<CaptionResult> }> = [
-    { name: "innertube-android", run: () => viaInnertube(videoId, lang) },
+    { name: "innertube-android", run: () => viaInnertube(videoId, lang, "android") },
+    { name: "innertube-ios", run: () => viaInnertube(videoId, lang, "ios") },
     { name: "npm-youtube-transcript", run: () => viaNpmPackage(videoId, lang) },
     { name: "watch-page", run: () => viaWatchPage(videoId, lang) },
   ];
@@ -144,14 +174,56 @@ function decodeEntities(text: string): string {
     .replace(/&gt;/g, ">");
 }
 
-// ── Strategy 1: InnerTube ANDROID player API ────────────────────────────────
+// ── Strategy 1 & 2: InnerTube player API (ANDROID / iOS clients) ─────────────
 
-async function viaInnertube(videoId: string, lang: string): Promise<CaptionResult> {
+// Fetches and caches a `visitorData` token (a real session identifier). Cached
+// for the lifetime of the serverless instance; failures are non-fatal.
+let visitorDataPromise: Promise<string | null> | null = null;
+function getVisitorData(): Promise<string | null> {
+  if (!visitorDataPromise) {
+    visitorDataPromise = (async () => {
+      try {
+        const res = await fetch("https://www.youtube.com/sw.js_data", {
+          headers: { "User-Agent": BROWSER_UA },
+        });
+        if (!res.ok) return null;
+        const text = await res.text();
+        const match = text.match(/"(Cg[A-Za-z0-9_-]{20,})"/); // visitorData token shape
+        return match?.[1] ?? null;
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return visitorDataPromise;
+}
+
+async function viaInnertube(
+  videoId: string,
+  lang: string,
+  clientKey: "android" | "ios",
+): Promise<CaptionResult> {
+  const client = INNERTUBE_CLIENTS[clientKey];
+  const visitorData = await getVisitorData();
+
   const res = await fetch(INNERTUBE_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "User-Agent": INNERTUBE_UA },
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": client.userAgent,
+      ...(visitorData ? { "X-Goog-Visitor-Id": visitorData } : {}),
+    },
     body: JSON.stringify({
-      context: { client: { clientName: "ANDROID", clientVersion: INNERTUBE_CLIENT_VERSION } },
+      context: {
+        client: {
+          clientName: client.clientName,
+          clientVersion: client.clientVersion,
+          hl: lang,
+          gl: "US",
+          ...(visitorData ? { visitorData } : {}),
+          ...(client.extra ?? {}),
+        },
+      },
       videoId,
     }),
   });
@@ -161,6 +233,11 @@ async function viaInnertube(videoId: string, lang: string): Promise<CaptionResul
   const status = data?.playabilityStatus?.status;
   if (status && status !== "OK") {
     const reason = data?.playabilityStatus?.reason ?? "";
+    // LOGIN_REQUIRED here means this IP got flagged by YouTube's bot check —
+    // not a problem with the video. Call it out so the failure is understood.
+    if (status === "LOGIN_REQUIRED") {
+      throw new Error(`bot check / IP flagged by YouTube (LOGIN_REQUIRED: ${reason})`);
+    }
     throw new Error(`not playable: ${status}${reason ? ` (${reason})` : ""}`);
   }
 
@@ -175,7 +252,7 @@ async function viaInnertube(videoId: string, lang: string): Promise<CaptionResul
     languageCode: track.languageCode,
     isAutoGenerated: track.kind === "asr",
     segments,
-    strategy: "innertube-android",
+    strategy: `innertube-${clientKey}`,
   };
 }
 
