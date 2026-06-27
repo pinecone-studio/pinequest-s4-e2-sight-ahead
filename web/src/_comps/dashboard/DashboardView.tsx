@@ -41,6 +41,7 @@ import type {
   YouTubeVideoSearchResult,
 } from "@/lib/youtube-search";
 import { useProcessedVideo } from "./useProcessedVideo";
+import { toast } from "@/_comps/ui/Sonner";
 
 export type DashboardVideoSelection = {
   url: string;
@@ -385,9 +386,18 @@ export default function DashboardView({
 
   // Create a note at the current playback time and update local state/history.
   async function addNote() {
-    if (!videoId) return;
     const text = draft.trim();
     if (!text) return;
+
+    if (!videoId) {
+      toast("Эхлээд видео сонгоно уу");
+      return;
+    }
+    // Видео тоглож эхлээгүй бол тэмдэглэлийн цаг утгагүй — хэрэглэгчид сануулна.
+    if (!player.ready || (!player.playing && player.time < 1)) {
+      toast("Видеогоо тоглуулаад тэмдэглэлээ хийгээрэй");
+      return;
+    }
 
     try {
       const record = await createVideoNote(
@@ -403,6 +413,7 @@ export default function DashboardView({
       void savePlayback();
     } catch (error) {
       console.warn("Note failed to save:", error);
+      toast.error("Тэмдэглэл хадгалахад алдаа гарлаа");
     }
   }
 
@@ -620,7 +631,6 @@ export default function DashboardView({
           <NotesPane
             notes={notes}
             draft={draft}
-            currentTime={player.time}
             mode={mode}
             justAdded={justAdded}
             onDraftChange={setDraft}
