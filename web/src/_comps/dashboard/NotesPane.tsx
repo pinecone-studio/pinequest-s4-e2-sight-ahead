@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import type { Note } from "./data"
-import { QUILL_DARK, QUILL_LIGHT } from "./cursors"
+import { PENCIL } from "./cursors"
 import { NoteEditor } from "./NoteEditor"
 import { NoteList } from "./NoteList"
 import { NotesHeader } from "./NotesHeader"
@@ -11,7 +11,6 @@ import { ReviewPane } from "./ReviewPane"
 type NotesPaneProps = {
   notes: Note[]
   draft: string
-  currentTime: number
   mode: "write" | "review"
   justAdded: string | null
   onDraftChange: (value: string) => void
@@ -25,7 +24,6 @@ type NotesPaneProps = {
 export function NotesPane({
   notes,
   draft,
-  currentTime,
   mode,
   justAdded,
   onDraftChange,
@@ -46,7 +44,7 @@ export function NotesPane({
       onPointerUp={() => setIsPressing(false)}
       onPointerCancel={() => setIsPressing(false)}
       onPointerLeave={() => setIsPressing(false)}
-      style={{ cursor: isPressing ? QUILL_LIGHT : QUILL_DARK }}
+      style={{ cursor: PENCIL }}
     >
       <div className="dashboard-paper" />
       <div className="dashboard-paper-light" />
@@ -58,16 +56,16 @@ export function NotesPane({
           onOpenSummary={onOpenSummary}
           onCollapse={onCollapse}
         />
-        {isWrite && <NoteEditor draft={draft} currentTime={currentTime} onDraftChange={onDraftChange} onAddNote={onAddNote} />}
         <div className="dashboard-scroll dashboard-notes-scroll">
           {isWrite ? (
-            <div style={{ padding: "4px 32px 40px" }}>
+            <div style={{ padding: "4px 24px 16px" }}>
               <NoteList notes={sorted} justAdded={justAdded} onJump={onJump} />
             </div>
           ) : (
             <ReviewPane notes={sorted} onJump={onJump} />
           )}
         </div>
+        {isWrite && <NoteEditor draft={draft} onDraftChange={onDraftChange} onAddNote={onAddNote} />}
       </div>
     </div>
   )

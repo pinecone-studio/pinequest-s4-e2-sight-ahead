@@ -1,36 +1,52 @@
 "use client"
 
-import { fmtTime } from "./time"
+import { useEffect, useRef } from "react"
 
 type NoteEditorProps = {
   draft: string
-  currentTime: number
   onDraftChange: (value: string) => void
   onAddNote: () => void
 }
 
-export function NoteEditor({ draft, currentTime, onDraftChange, onAddNote }: NoteEditorProps) {
+export function NoteEditor({ draft, onDraftChange, onAddNote }: NoteEditorProps) {
+  const canSave = draft.trim().length > 0
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Бичсэн хэмжээгээр өндрөө автоматаар тохируулна (scrollbar гаргахгүй).
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`
+  }, [draft])
+
   return (
-    <div style={{ flex: "none", padding: "16px 32px 14px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-        <span className="dashboard-note-time">{fmtTime(currentTime)}</span>
-        <span className="dashboard-note-hint">энэ агшинд</span>
-      </div>
+    <div className="dashboard-note-editor">
       <textarea
+        ref={textareaRef}
         value={draft}
         onChange={(event) => onDraftChange(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) onAddNote()
+          // Enter → хадгалах (видеоны яг тэр агшны цагтай), Shift+Enter → шинэ мөр
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault()
+            if (canSave) onAddNote()
+          }
         }}
-        rows={2}
-        placeholder="Бодлоо чөлөөтэй бичээрэй..."
+        rows={1}
+        placeholder="Тэмдэглэл бичих…"
         className="dashboard-note-textarea"
       />
-      <div className="dashboard-note-actions" style={{ justifyContent: "flex-end" }}>
-        <button onClick={onAddNote} className="dashboard-save-button">
-          Хадгалах
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={onAddNote}
+        disabled={!canSave}
+        className="dashboard-send-button"
+        aria-label="Хадгалах"
+        title="Хадгалах (Enter)"
+      >
+        →
+      </button>
     </div>
   )
 }

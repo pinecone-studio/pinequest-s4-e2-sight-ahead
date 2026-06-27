@@ -13,7 +13,7 @@ export function NoteList({ notes, justAdded, onJump }: NoteListProps) {
   if (notes.length === 0) {
     return (
       <div className="dashboard-empty-notes">
-        Одоохондоо хоосон байна. Видеогоо үзэж яваад зүрхэнд чинь хүрсэн мөчид бодлоо тэмдэглээрэй.
+        Эхний тэмдэглэлээ дээрх талбарт бичээрэй.
       </div>
     )
   }

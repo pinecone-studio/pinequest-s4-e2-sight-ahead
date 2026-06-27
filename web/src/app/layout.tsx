@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Cormorant, Onest, Caveat, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/_comps/providers/AuthProvider";
+import { Toaster } from "@/_comps/ui/Sonner";
 
 // Дизайн репо-гийн фонтууд — зөвхөн .dashboard-* skin эдгээр CSS хувьсагчдыг ашиглана.
 const onest = Onest({
@@ -42,6 +43,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-foreground font-body">
         <AuthProvider>{children}</AuthProvider>
+        <Toaster />
       </body>
     </html>
   );
