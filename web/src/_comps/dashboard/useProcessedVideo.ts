@@ -2,16 +2,18 @@
 
 import { useEffect, useState } from "react";
 import type { Segment } from "@/lib/backend-api";
-import { base64ToBlobUrl, fetchTranscript, streamProcess } from "@/lib/process-stream";
+import { fetchTranscript } from "@/lib/process-stream";
 
-// Full live pipeline for a selected video:
-//   1. fetch the transcript from our Vercel route (client-side, dodges the
-//      Render IP block),
-//   2. POST it to the backend /process and consume the SSE stream,
-//   3. append each translated + dubbed segment to state as it arrives, so the
-//      transcript fills in live and subtitles can switch immediately.
-// Audio dub (segment.audio_path = decoded blob URL) is attached but not yet
-// auto-played — that's the next step.
+// Loads the caption transcript for a selected video and exposes it as Segment[].
+//
+// Path A only: we fetch captions from our own Vercel route
+// (/api/youtube/transcript), which dodges the datacenter-IP block and is the
+// flow proven to work in /test. The captions are shown as-is.
+//
+// NOTE: the old Python pipeline (streamProcess → backend /process for Mongolian
+// translation + TTS dub) is intentionally DISCONNECTED here — it kept the UI
+// empty whenever the backend was unreachable. streamProcess/base64ToBlobUrl
+// still live in lib/process-stream.ts if we want to re-enable dubbing later.
 export function useProcessedVideo(videoId: string) {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -25,65 +27,49 @@ export function useProcessedVideo(videoId: string) {
       return;
     }
 
-    let active = true;
-    const controller = new AbortController();
-    const blobUrls: string[] = [];
+    let active = true; // guards against state updates after the video changes
 
     setSegments([]);
     setError("");
     setLoading(true);
-    console.log("video started processing", videoId);
+    console.log("[useProcessedVideo] fetching captions for", videoId);
 
     (async () => {
       try {
         const transcript = await fetchTranscript(videoId);
         if (!active) return;
+
         if (!transcript.segments.length) {
           setError("No transcript available for this video.");
           setLoading(false);
           return;
         }
 
-        await streamProcess(
-          { source_lang: transcript.source_lang, segments: transcript.segments },
-          {
-            onSegment: (s) => {
-              if (!active) return;
-              const audioUrl = s.audio_b64 ? base64ToBlobUrl(s.audio_b64) : null;
-              if (audioUrl) blobUrls.push(audioUrl);
-              const seg: Segment = {
-                start: s.offset,
-                duration: s.duration,
-                text: s.text,
-                source: "youtube_captions",
-                translated_text: s.translated_text,
-                audio_path: audioUrl,
-                audio_ms: s.audio_ms,
-              };
-              setSegments((prev) => [...prev, seg]);
-            },
-            onDone: () => {
-              if (active) setLoading(false);
-            },
-            onError: (message) => {
-              if (!active) return;
-              setError(message);
-              setLoading(false);
-            },
-          },
-          controller.signal,
-        );
+        // Map the raw transcript into the Segment shape SubtitlePane expects.
+        // No translation/dub yet: translated_text/audio stay null and the pane
+        // falls back to the original caption text.
+        const mapped: Segment[] = transcript.segments.map((s) => ({
+          start: s.start,
+          duration: s.duration,
+          text: s.text,
+          source: "youtube_captions",
+          translated_text: null,
+          audio_path: null,
+          audio_ms: null,
+        }));
+
+        setSegments(mapped);
+        setLoading(false);
+        console.log(`[useProcessedVideo] loaded ${mapped.length} caption segments`);
       } catch (err) {
         if (!active) return;
-        setError(err instanceof Error ? err.message : "Processing failed.");
+        setError(err instanceof Error ? err.message : "Transcript fetch failed.");
         setLoading(false);
       }
     })();
 
     return () => {
       active = false;
-      controller.abort();
-      blobUrls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [videoId]);
 
