@@ -27,10 +27,13 @@ export function ScreenShareProvider({ children }: { children: ReactNode }) {
   const requestShare = useCallback(async () => {
     setError(null);
     try {
-      //permission prompt. success = granted
+      // permission prompt. success = granted.
+      // audio: true so the Whisper transcriber can read the shared tab's audio —
+      // the user must tick "Share tab audio" in the picker for a track to appear.
+      // (OCR ignores the audio track, so this is harmless to that path.)
       const media = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 5 },
-        audio: false,
+        audio: true,
       });
       media.getVideoTracks()[0].addEventListener("ended", () => {
         setStream(null);

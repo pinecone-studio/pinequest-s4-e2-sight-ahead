@@ -14,7 +14,10 @@ import {
   ScreenShareProvider,
   useScreenShare,
 } from "@/app/test/screengrab/_comps/ScreenShareProvider";
-import { CaptionOCR, DEFAULT_CROP } from "@/app/test/screengrab/_comps/CaptionOcr";
+import {
+  CaptionOCR,
+  DEFAULT_CROP,
+} from "@/app/test/screengrab/_comps/CaptionOcr";
 
 // One OCR'd caption line with a rough start time (seconds since processing began).
 type Segment = { index: number; start: number; text: string };
@@ -29,7 +32,8 @@ function ProcessRunner({ videoId }: { videoId: string }) {
   const startRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (isSharing && startRef.current === null) startRef.current = performance.now();
+    if (isSharing && startRef.current === null)
+      startRef.current = performance.now();
     if (!isSharing) startRef.current = null;
   }, [isSharing]);
 
@@ -39,7 +43,9 @@ function ProcessRunner({ videoId }: { videoId: string }) {
   const handleText = (text: string) => {
     setLastText(text);
     const start =
-      startRef.current === null ? 0 : (performance.now() - startRef.current) / 1000;
+      startRef.current === null
+        ? 0
+        : (performance.now() - startRef.current) / 1000;
     setSegments((prev) => {
       const seg: Segment = {
         index: prev.length,
@@ -110,7 +116,9 @@ function ProcessRunner({ videoId }: { videoId: string }) {
           </button>
         )}
         {error && <span className="text-red-400">{error}</span>}
-        <span className="text-zinc-400">{segments.length} segments captured</span>
+        <span className="text-zinc-400">
+          {segments.length} segments captured
+        </span>
         <span className="max-w-65 truncate text-zinc-300">
           last read: {lastText || "—"}
         </span>
@@ -120,7 +128,7 @@ function ProcessRunner({ videoId }: { videoId: string }) {
       </div>
 
       {/* OCR worker pool runs only while a screen is being shared. */}
-      {isSharing && <CaptionOCR onText={handleText} />}
+      <CaptionOCR onText={handleText} />
     </main>
   );
 }

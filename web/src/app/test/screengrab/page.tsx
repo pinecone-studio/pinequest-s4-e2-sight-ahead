@@ -1,31 +1,37 @@
 "use client";
 
-// Test page: can OCR read YouTube captions off the screen instead of fetching
-// them from YouTube (which keeps getting blocked)?
-// Flow: user shares a screen/tab → we show it in a <video> → CaptionOCR reads
-// a strip of each frame and reports any text it finds.
+// Test page: harvest captions by OCR AND transcribe the tab's audio with
+// in-browser Whisper, then CROSS-CHECK them. OCR gives accurate on-screen timing
+// but picks up pixel junk; Whisper gives clean language for what was actually
+// said. Validating OCR segments against the Whisper transcript yields the
+// "guaranteed" segments — the trustworthy data we'd send to the backend.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CaptionOCR, DEFAULT_CROP } from "./_comps/CaptionOcr";
+import { WhisperTranscriber } from "./_comps/WhisperTranscriber";
 import { useScreenShare } from "./_comps/ScreenShareProvider";
-import { CaptionAssembler, type Segment } from "./_comps/captionAssembler";
+import { CaptionAssembler } from "./_comps/captionAssembler";
+import { validateSegments, guaranteedSegments } from "./_comps/captionValidator";
 
 export default function TestDubPage() {
   const { stream, error, isSharing, requestShare, stopShare } =
     useScreenShare();
 
-  // The <video> element that previews the shared screen.
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  // Most recent raw text OCR pulled off the screen (shown for quick eyeballing).
-  const [ocrText, setOcrText] = useState("");
-  // Clean, de-duplicated, timed segments rebuilt from the noisy OCR stream.
-  const [segments, setSegments] = useState<Segment[]>([]);
-  // Merges overlapping OCR reads into one timestamped transcript (browser-side).
-  const assemblerRef = useRef(new CaptionAssembler());
-  // When sharing started, so each caption can be timestamped relative to it.
+
+  // Two independent harvest streams, each merged by its own assembler.
+  const ocrAssemblerRef = useRef(new CaptionAssembler());
+  const whisperAssemblerRef = useRef(new CaptionAssembler());
   const startRef = useRef<number | null>(null);
 
-  // Feed the shared stream into the preview <video> whenever it changes.
+  const [ocrSegments, setOcrSegments] = useState(() =>
+    ocrAssemblerRef.current.segments(),
+  );
+  const [whisperText, setWhisperText] = useState("");
+  const [lastOcr, setLastOcr] = useState("");
+  const [lastWhisper, setLastWhisper] = useState("");
+
+  // Feed the shared stream into the preview <video>.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -33,44 +39,56 @@ export default function TestDubPage() {
     if (stream) video.play().catch(() => {});
   }, [stream]);
 
-  // Mark when harvesting starts/stops so timestamps are relative to share start,
-  // and clear the previous batch when a new share begins.
+  // Reset both streams when a share starts/stops; timestamps run from here.
   useEffect(() => {
-    if (isSharing) {
-      startRef.current = performance.now();
-      assemblerRef.current.reset();
-      setSegments([]);
-    } else {
-      startRef.current = null;
-    }
+    ocrAssemblerRef.current.reset();
+    whisperAssemblerRef.current.reset();
+    setOcrSegments([]);
+    setWhisperText("");
+    setLastOcr("");
+    setLastWhisper("");
+    startRef.current = isSharing ? performance.now() : null;
   }, [isSharing]);
 
-  // Each raw OCR read is fed to the assembler, which strips the rolling-window
-  // repetition and rebuilds clean timed segments. We log the recomputed batch —
-  // this is the data that will be POSTed to the backend for translation + dub.
-  const handleText = (text: string) => {
-    setOcrText(text);
-    const time =
-      startRef.current === null
-        ? 0
-        : (performance.now() - startRef.current) / 1000;
-    assemblerRef.current.add(text, time);
-    const batch = assemblerRef.current.segments();
-    setSegments(batch);
-    console.log("[screengrab] clean segments", batch);
+  const elapsed = () =>
+    startRef.current === null ? 0 : (performance.now() - startRef.current) / 1000;
+
+  const handleOcr = (text: string) => {
+    setLastOcr(text);
+    ocrAssemblerRef.current.add(text, elapsed());
+    setOcrSegments(ocrAssemblerRef.current.segments());
   };
+
+  const handleWhisper = (text: string) => {
+    setLastWhisper(text);
+    whisperAssemblerRef.current.add(text, elapsed());
+    setWhisperText(whisperAssemblerRef.current.transcript());
+  };
+
+  // Cross-check OCR timing/text against the Whisper transcript.
+  const validated = useMemo(
+    () => validateSegments(ocrSegments, whisperText),
+    [ocrSegments, whisperText],
+  );
+  const guaranteed = useMemo(() => guaranteedSegments(validated), [validated]);
+
+  // Log the trustworthy batch whenever it changes — this is what would be POSTed.
+  useEffect(() => {
+    if (guaranteed.length) console.log("[screengrab] guaranteed segments", guaranteed);
+  }, [guaranteed]);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6 space-y-4">
       <header>
-        <h1 className="text-xl font-bold">Screen-grab OCR test</h1>
+        <h1 className="text-xl font-bold">Caption harvest + audio cross-check</h1>
         <p className="text-sm text-zinc-400">
-          Share the tab/window playing a video with captions on, then watch the
-          OCR output below.
+          Share the tab playing a video (tick <b>Share tab audio</b>). OCR reads
+          the caption pixels; Whisper transcribes the audio; verified = OCR
+          corroborated by the audio = guaranteed data.
         </p>
       </header>
 
-      {/* Screen permission button: toggles the share prompt on/off. */}
+      {/* Screen permission button. */}
       <div className="flex gap-2">
         {!isSharing ? (
           <button
@@ -91,9 +109,7 @@ export default function TestDubPage() {
 
       {error && <p className="text-red-400 text-sm">{error}</p>}
 
-      {/* Video player: previews whatever screen/tab the user shared.
-          object-fill makes the frame map 1:1 to the element box, so the crop
-          box below lines up with the region the OCR actually reads. */}
+      {/* Preview with the OCR crop box. */}
       <div className="relative w-full max-w-3xl">
         <video
           ref={videoRef}
@@ -101,7 +117,6 @@ export default function TestDubPage() {
           playsInline
           className="w-full rounded-lg border border-zinc-800 bg-black aspect-video object-fill"
         />
-        {/* Debug guide: highlighted border showing the exact OCR crop region. */}
         {isSharing && (
           <div
             className="absolute border-2 border-lime-400/90 pointer-events-none"
@@ -115,29 +130,59 @@ export default function TestDubPage() {
         )}
       </div>
 
-      {/* Latest OCR reading. */}
+      {/* Live status of each source. */}
+      <section className="max-w-3xl grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="rounded bg-zinc-900 p-3 text-xs">
+          <div className="text-zinc-400 mb-1">Last OCR read</div>
+          <div className="font-mono wrap-break-word">{lastOcr || "—"}</div>
+        </div>
+        <div className="rounded bg-zinc-900 p-3 text-xs">
+          <div className="text-zinc-400 mb-1">Last Whisper read</div>
+          <div className="font-mono wrap-break-word">{lastWhisper || "—"}</div>
+        </div>
+      </section>
+
+      {/* OCR segments annotated with their audio-cross-check confidence. */}
       <section className="max-w-3xl">
-        <h2 className="text-sm text-zinc-400 mb-1">OCR output</h2>
-        <div className="min-h-12 rounded bg-zinc-900 p-3 font-mono text-sm wrap-break-word">
-          {ocrText || (
-            <span className="text-zinc-600">
-              {isSharing ? "Waiting for caption text…" : "Not sharing yet."}
-            </span>
+        <h2 className="text-sm text-zinc-400 mb-1">
+          OCR segments ({validated.length}) — {guaranteed.length} verified
+        </h2>
+        <div className="max-h-64 overflow-auto rounded bg-zinc-900 p-3 font-mono text-xs space-y-1">
+          {validated.length === 0 ? (
+            <span className="text-zinc-600">No segments yet.</span>
+          ) : (
+            validated.map((seg, i) => (
+              <div key={i} className="wrap-break-word">
+                <span
+                  className={seg.verified ? "text-green-400" : "text-zinc-600"}
+                  title={`confidence ${seg.confidence}`}
+                >
+                  {seg.verified ? "✓" : "·"} [{seg.start.toFixed(1)}s ·{" "}
+                  {(seg.confidence * 100).toFixed(0)}%]
+                </span>{" "}
+                {seg.text}
+                {seg.verified && seg.text !== seg.ocrText && (
+                  <span className="text-zinc-600"> (ocr: {seg.ocrText})</span>
+                )}
+              </div>
+            ))
           )}
         </div>
       </section>
 
-      {/* Harvested segments — the running batch (also logged to the console). */}
+      {/* The trustworthy output (also logged to the console). */}
       <section className="max-w-3xl">
         <h2 className="text-sm text-zinc-400 mb-1">
-          Harvested segments ({segments.length})
+          Guaranteed segments ({guaranteed.length})
         </h2>
-        <div className="max-h-64 overflow-auto rounded bg-zinc-900 p-3 font-mono text-xs space-y-1">
-          {segments.length === 0 ? (
-            <span className="text-zinc-600">No segments harvested yet.</span>
+        <div className="max-h-48 overflow-auto rounded bg-zinc-900 p-3 font-mono text-xs space-y-1">
+          {guaranteed.length === 0 ? (
+            <span className="text-zinc-600">
+              None verified yet (Whisper lags OCR by a few seconds).
+            </span>
           ) : (
-            segments.map((seg, i) => (
-              <div key={i} className="wrap-break-word">
+            guaranteed.map((seg, i) => (
+              <div key={i} className="wrap-break-word text-green-300">
                 <span className="text-zinc-500">
                   [{seg.start.toFixed(1)}s · {seg.duration.toFixed(1)}s]
                 </span>{" "}
@@ -148,8 +193,13 @@ export default function TestDubPage() {
         </div>
       </section>
 
-      {/* OCR worker runs only while sharing; it has no UI of its own. */}
-      {isSharing && <CaptionOCR onText={handleText} />}
+      {/* Both harvesters run together while sharing. */}
+      {isSharing && <CaptionOCR onText={handleOcr} />}
+      {isSharing && (
+        <section className="max-w-3xl">
+          <WhisperTranscriber onText={handleWhisper} />
+        </section>
+      )}
     </main>
   );
 }
