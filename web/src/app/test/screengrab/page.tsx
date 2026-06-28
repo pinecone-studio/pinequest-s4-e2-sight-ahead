@@ -6,7 +6,7 @@
 // a strip of each frame and reports any text it finds.
 
 import { useEffect, useRef, useState } from "react";
-import { CaptionOCR } from "./_comps/CaptionOcr";
+import { CaptionOCR, DEFAULT_CROP } from "./_comps/CaptionOcr";
 import { useScreenShare } from "./_comps/ScreenShareProvider";
 
 export default function TestDubPage() {
@@ -57,13 +57,29 @@ export default function TestDubPage() {
 
       {error && <p className="text-red-400 text-sm">{error}</p>}
 
-      {/* Video player: previews whatever screen/tab the user shared. */}
-      <video
-        ref={videoRef}
-        muted
-        playsInline
-        className="w-full max-w-3xl rounded-lg border border-zinc-800 bg-black aspect-video"
-      />
+      {/* Video player: previews whatever screen/tab the user shared.
+          object-fill makes the frame map 1:1 to the element box, so the crop
+          box below lines up with the region the OCR actually reads. */}
+      <div className="relative w-full max-w-3xl">
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          className="w-full rounded-lg border border-zinc-800 bg-black aspect-video object-fill"
+        />
+        {/* Debug guide: highlighted border showing the exact OCR crop region. */}
+        {isSharing && (
+          <div
+            className="absolute border-2 border-lime-400/90 pointer-events-none"
+            style={{
+              left: `${DEFAULT_CROP.left * 100}%`,
+              top: `${DEFAULT_CROP.top * 100}%`,
+              width: `${DEFAULT_CROP.width * 100}%`,
+              height: `${DEFAULT_CROP.height * 100}%`,
+            }}
+          />
+        )}
+      </div>
 
       {/* Latest OCR reading. */}
       <section className="max-w-3xl">

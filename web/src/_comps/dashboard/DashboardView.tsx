@@ -33,6 +33,7 @@ import {
   fetchWatchHistory,
   recordWatchHistory,
   type NoteRecord,
+  type Segment,
   type VideoHistoryPayload,
   type VideoHistoryRecord,
 } from "@/lib/backend-api";
@@ -40,8 +41,11 @@ import type {
   YouTubeSearchResult,
   YouTubeVideoSearchResult,
 } from "@/lib/youtube-search";
-import { useProcessedVideo } from "./useProcessedVideo";
 import { toast } from "@/_comps/ui/Sonner";
+
+// Captions now come exclusively from the OCR processing tab (see /process/[id]),
+// not from the transcript API — so the in-page subtitle/assistant start empty.
+const EMPTY_SEGMENTS: Segment[] = [];
 
 export type DashboardVideoSelection = {
   url: string;
@@ -189,6 +193,8 @@ export default function DashboardView({
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [dubMode, setDubMode] = useState<"mongolian" | "original">("original");
   const [voiceGender, setVoiceGender] = useState<"male" | "female">("male");
+  // Whether the user has dismissed the "Process Video?" wall for this video.
+  const [processStarted, setProcessStarted] = useState(false);
   const [query, setQuery] = useState("");
   const [searchedQuery, setSearchedQuery] = useState("");
   const [searchResults, setSearchResults] = useState<YouTubeSearchResult[]>([]);
@@ -277,13 +283,6 @@ export default function DashboardView({
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
   const dub = useDubAudio(videoId, player.time, dubMode === "mongolian", voiceGender, player.playbackRate);
-  // Fetches captions for the selected video (Path A, client-side) and exposes
-  // them as `processedSegments` for the SubtitlePane to render.
-  const {
-    segments: processedSegments,
-    loading: processingLoading,
-    error: processingError,
-  } = useProcessedVideo(videoId);
   const recommendationSearchQuery = useMemo(
     () => recommendationQuery(activeItem),
     [activeItem],
@@ -332,14 +331,18 @@ export default function DashboardView({
     }
   }, [dubMode, player.mute, player.unMute]);
 
-  // Log the caption-fetch lifecycle for the selected video.
+  // Re-show the "Process Video?" wall whenever a different video is selected.
   useEffect(() => {
-    if (processingError) {
-      console.warn("caption fetch failed:", processingError);
-    } else if (!processingLoading && processedSegments.length) {
-      console.log(`captions loaded: ${processedSegments.length} segments for ${videoId}`);
-    }
-  }, [processedSegments, processingLoading, processingError, videoId]);
+    setProcessStarted(false);
+  }, [videoId]);
+
+  // Open the standalone OCR processing tab for this video (screen-share based,
+  // no transcript/API fetching), then dismiss the wall so the user can watch.
+  const handleProcessVideo = useCallback(() => {
+    if (!videoId) return;
+    window.open(`/process/${videoId}`, "_blank", "noopener,noreferrer");
+    setProcessStarted(true);
+  }, [videoId]);
 
   // Unlock browser autoplay gate on first user interaction, then toggle dub.
   const handleToggleDub = useCallback(() => {
@@ -632,11 +635,11 @@ export default function DashboardView({
                 segments={
                   dubMode === "mongolian" && dub.translatedSegments.length > 0
                     ? dub.translatedSegments
-                    : processedSegments
+                    : EMPTY_SEGMENTS
                 }
                 currentTime={player.time}
-                loading={processingLoading}
-                error={processingError}
+                loading={false}
+                error={""}
               />
             ) : null
           }
@@ -647,13 +650,15 @@ export default function DashboardView({
           voiceGender={voiceGender}
           onToggleDub={handleToggleDub}
           onToggleGender={() => setVoiceGender((g) => (g === "male" ? "female" : "male"))}
+          showProcessGate={Boolean(videoId) && !processStarted}
+          onProcessVideo={handleProcessVideo}
         />
         {assistantOpen ? (
           <AssistantChat
             open={assistantOpen}
             videoId={videoId}
             currentTime={player.time}
-            segments={processedSegments}
+            segments={EMPTY_SEGMENTS}
             onClose={() => setAssistantOpen(false)}
             onCollapse={() => {
               setAssistantOpen(false);

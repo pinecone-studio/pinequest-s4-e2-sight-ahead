@@ -21,6 +21,10 @@ type VideoPaneProps = {
   voiceGender?: "male" | "female"
   onToggleDub?: () => void
   onToggleGender?: () => void
+  // "Process Video?" wall: shown over the frame until the user clicks it, which
+  // opens the OCR processing tab.
+  showProcessGate?: boolean
+  onProcessVideo?: () => void
 }
 
 function statusText(status: DubStep | undefined, progress: { done: number; total: number } | null | undefined): string {
@@ -50,12 +54,40 @@ export function VideoPane(props: VideoPaneProps) {
         <span>{props.sourceLine ?? SOURCE_LINE}</span>
       </div>
       <h1>{props.title}</h1>
-      <VideoFrame
-        containerRef={props.containerRef}
-        ready={props.ready}
-        hasVideo={props.hasVideo}
-      />
-      {props.subtitle} abc
+      <div style={{ position: "relative" }}>
+        <VideoFrame
+          containerRef={props.containerRef}
+          ready={props.ready}
+          hasVideo={props.hasVideo}
+        />
+        {/* Clickable wall over the player: opens the OCR processing tab. Sits
+            above the YouTube iframe so the click is reliably captured. */}
+        {props.showProcessGate && props.onProcessVideo && (
+          <button
+            onClick={props.onProcessVideo}
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              border: 0,
+              cursor: "pointer",
+              background: "rgba(0,0,0,0.6)",
+              color: "#fff",
+              backdropFilter: "blur(2px)",
+            }}
+          >
+            <span style={{ fontSize: 22, fontWeight: 700 }}>Process Video?</span>
+            <span style={{ fontSize: 13, opacity: 0.8 }}>
+              Шинэ цонхонд OCR ажиллуулна
+            </span>
+          </button>
+        )}
+      </div>
+      {props.subtitle}
       {props.hasVideo && props.onToggleDub && (
         <div className="dashboard-dub-toggle">
           <div className="dashboard-dub-buttons">
