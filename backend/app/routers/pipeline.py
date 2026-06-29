@@ -1,10 +1,11 @@
 """Streaming dub pipeline.
 
-The YouTube transcript is fetched CLIENT-SIDE (Vercel /api/youtube/transcript)
-because datacenter IPs get blocked by YouTube. The client POSTs the raw segments
-here; we batch-translate them to Mongolian (duration-aware) and run TTS per
-segment, streaming each finished segment back over SSE with inline base64 audio
-so the UI can play it like a live dub.
+Captions are harvested CLIENT-SIDE in the browser (screen-share OCR cross-checked
+against in-browser Whisper → "guaranteed" segments) — no server-side YouTube
+fetch, so nothing can get IP-blocked. The client POSTs those segments here in
+batches (~60 at a time); we batch-translate them to Mongolian (context- and
+duration-aware) and run TTS per segment, streaming each finished segment back
+over SSE with inline base64 audio so the UI can play it like a live dub.
 """
 
 import base64

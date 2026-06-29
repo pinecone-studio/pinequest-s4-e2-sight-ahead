@@ -97,12 +97,24 @@ def _openai_translate_batch_timed(
         for text, duration in items
     ]
     prompt = (
-        f"You are dubbing subtitles from {source_lang} to {target_lang}. Translate "
-        f"each item's `text`. Every line is spoken aloud and must fit its on-screen "
-        f"time, so keep the {target_lang} translation natural but NO LONGER than about "
-        f"`max_chars` characters — compress/shorten the wording rather than overrun. "
+        f"You are dubbing subtitles from {source_lang} to {target_lang}. The items "
+        f"below are CONSECUTIVE caption fragments from one video, harvested by OCR, so "
+        f"they may be messy: clipped words, missing punctuation, and many very short "
+        f"(1-2 word) fragments that are only PART of a sentence.\n"
+        f"Work as follows:\n"
+        f"1. Read the whole list together and mentally reassemble it into sentences "
+        f"(usually one or two sentences span several consecutive fragments). Clean up "
+        f"obvious OCR noise.\n"
+        f"2. Translate by MEANING at the sentence level — never translate a short "
+        f"1-2 word fragment in isolation; translate it as the part of its sentence it "
+        f"belongs to, so meaning and grammar are preserved.\n"
+        f"3. Then split each sentence's {target_lang} translation back across the "
+        f"fragments it came from, IN ORDER, so output[i] corresponds to input[i] and "
+        f"the fragments still read naturally when concatenated.\n"
+        f"4. Each fragment is spoken aloud and should roughly fit its on-screen time: "
+        f"stay near `max_chars` characters, compressing rather than overrunning.\n"
         f'Respond with ONLY a JSON object {{"translations": [...]}} containing exactly '
-        f"{len(items)} strings, in the same order.\n\n"
+        f"{len(items)} strings, in the same order as the input.\n\n"
         f"{json.dumps(payload, ensure_ascii=False)}"
     )
     response = client.chat.completions.create(

@@ -6,12 +6,16 @@
 // said. Validating OCR segments against the Whisper transcript yields the
 // "guaranteed" segments — the trustworthy data we'd send to the backend.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CaptionOCR, DEFAULT_CROP } from "./_comps/CaptionOcr";
 import { WhisperTranscriber } from "./_comps/WhisperTranscriber";
 import { useScreenShare } from "./_comps/ScreenShareProvider";
-import { CaptionAssembler } from "./_comps/captionAssembler";
+import { CaptionAssembler, type Segment } from "./_comps/captionAssembler";
 import { validateSegments, guaranteedSegments } from "./_comps/captionValidator";
+import { streamProcess } from "@/lib/process-stream";
+
+// POST guaranteed segments to the backend /process pipeline in batches of ~60.
+const BATCH_SIZE = 60;
 
 export default function TestDubPage() {
   const { stream, error, isSharing, requestShare, stopShare } =
@@ -47,6 +51,9 @@ export default function TestDubPage() {
     setWhisperText("");
     setLastOcr("");
     setLastWhisper("");
+    sentCountRef.current = 0;
+    setSentCount(0);
+    setTranslatedCount(0);
     startRef.current = isSharing ? performance.now() : null;
   }, [isSharing]);
 
@@ -72,10 +79,66 @@ export default function TestDubPage() {
   );
   const guaranteed = useMemo(() => guaranteedSegments(validated), [validated]);
 
-  // Log the trustworthy batch whenever it changes — this is what would be POSTed.
+  // ── Batch send: POST guaranteed segments to the backend ~60 at a time. ──
+  const sentCountRef = useRef(0); // how many guaranteed segments already sent
+  const sendingRef = useRef(false); // one batch in flight at a time
+  const [sentCount, setSentCount] = useState(0);
+  const [translatedCount, setTranslatedCount] = useState(0);
+
+  // POST one batch through the existing /process SSE helper and log results.
+  const sendBatch = useCallback(async (batch: Segment[]) => {
+    if (!batch.length) return;
+    console.log(`[screengrab] → POST ${batch.length} segments to /process`);
+    try {
+      await streamProcess(
+        {
+          source_lang: "en",
+          gender: "female",
+          segments: batch.map(({ start, duration, text }) => ({
+            start,
+            duration,
+            text,
+          })),
+        },
+        {
+          onSegment: (seg) => {
+            setTranslatedCount((n) => n + 1);
+            console.log("[screengrab] ← translated", seg.translated_text);
+          },
+          onDone: (total) => console.log(`[screengrab] ← batch done (${total})`),
+          onError: (msg) => console.warn("[screengrab] batch error:", msg),
+        },
+      );
+    } catch (e) {
+      console.warn("[screengrab] send failed:", e);
+    }
+  }, []);
+
+  // Auto-send whenever a full batch of new guaranteed segments has accumulated.
   useEffect(() => {
-    if (guaranteed.length) console.log("[screengrab] guaranteed segments", guaranteed);
-  }, [guaranteed]);
+    if (sendingRef.current) return;
+    if (guaranteed.length - sentCountRef.current < BATCH_SIZE) return;
+    const batch = guaranteed.slice(sentCountRef.current, sentCountRef.current + BATCH_SIZE);
+    sendingRef.current = true;
+    sentCountRef.current += batch.length;
+    setSentCount(sentCountRef.current);
+    void sendBatch(batch).finally(() => {
+      sendingRef.current = false;
+    });
+  }, [guaranteed, sendBatch]);
+
+  // Manually flush the remaining (< BATCH_SIZE) segments, e.g. at the end.
+  const sendRemaining = useCallback(() => {
+    if (sendingRef.current) return;
+    const batch = guaranteed.slice(sentCountRef.current);
+    if (!batch.length) return;
+    sendingRef.current = true;
+    sentCountRef.current = guaranteed.length;
+    setSentCount(sentCountRef.current);
+    void sendBatch(batch).finally(() => {
+      sendingRef.current = false;
+    });
+  }, [guaranteed, sendBatch]);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6 space-y-4">
@@ -168,6 +231,20 @@ export default function TestDubPage() {
             ))
           )}
         </div>
+      </section>
+
+      {/* Backend batch status: auto-sends every 60 verified segments. */}
+      <section className="max-w-3xl flex items-center gap-3 text-xs text-zinc-400">
+        <span>
+          sent {sentCount}/{guaranteed.length} · translated {translatedCount}
+        </span>
+        <button
+          onClick={sendRemaining}
+          disabled={guaranteed.length - sentCount <= 0}
+          className="rounded bg-zinc-800 px-3 py-1 text-zinc-200 hover:bg-zinc-700 disabled:opacity-40"
+        >
+          Send remaining ({Math.max(0, guaranteed.length - sentCount)})
+        </button>
       </section>
 
       {/* The trustworthy output (also logged to the console). */}

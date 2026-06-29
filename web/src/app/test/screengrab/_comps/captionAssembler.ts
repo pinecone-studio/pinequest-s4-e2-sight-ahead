@@ -33,8 +33,10 @@ export class CaptionAssembler {
   private matchRatio: number;
 
   constructor(opts: AssemblerOpts = {}) {
-    this.overlapWindow = opts.overlapWindow ?? 16;
-    this.minOverlap = opts.minOverlap ?? 2;
+    // Window must be large enough to cover a full re-transcribed Whisper window
+    // (~10s ≈ 30 words), whose overlap with the committed tail is deep.
+    this.overlapWindow = opts.overlapWindow ?? 64;
+    this.minOverlap = opts.minOverlap ?? 1;
     this.matchRatio = opts.matchRatio ?? 0.6;
   }
 
@@ -58,11 +60,14 @@ export class CaptionAssembler {
       return;
     }
 
-    // Try aligning `toks` against the tail of the committed transcript: find the
-    // start position `p` whose overlapping region matches best.
+    // Align `toks` against the tail of the committed transcript. Score each
+    // candidate start position `p` by the NUMBER of matching words (not the
+    // ratio) so a deep, real overlap wins over a tiny coincidental one — that
+    // ratio bug was re-appending whole re-transcribed windows as duplicates.
+    // The ratio is only a confidence gate to reject junk alignments.
     const from = Math.max(0, L - this.overlapWindow);
     let bestP = L; // default: no overlap found → treat everything as new
-    let bestScore = 0;
+    let bestMatches = 0;
     for (let p = from; p < L; p++) {
       const overlapLen = Math.min(toks.length, L - p);
       if (overlapLen < this.minOverlap) continue;
@@ -70,23 +75,26 @@ export class CaptionAssembler {
       for (let i = 0; i < overlapLen; i++) {
         if (this.words[p + i].norm === toks[i].norm) matches++;
       }
-      const score = matches / overlapLen;
-      // Prefer the highest score; on ties prefer the longer overlap (smaller p).
-      if (score > bestScore) {
-        bestScore = score;
+      if (matches / overlapLen < this.matchRatio) continue; // not a real overlap
+      // Most matches wins; scanning deep→shallow keeps the longer overlap on ties.
+      if (matches > bestMatches) {
+        bestMatches = matches;
         bestP = p;
       }
     }
 
-    // Accept the alignment only if confident; otherwise the line is fresh content.
-    const startP = bestScore >= this.matchRatio ? bestP : L;
-    const overlapLen = Math.min(toks.length, L - startP);
+    const overlapLen = Math.min(toks.length, L - bestP);
     const tail = toks.slice(overlapLen);
 
     // Repetition guard: don't append a tail that just repeats the words already
     // sitting at the end (e.g. a recurring watermark caption re-read).
-    if (tail.length && !this.endsWith(tail)) {
-      this.words.push(...tail);
+    if (!tail.length || this.endsWith(tail)) return;
+
+    // Append, collapsing immediate stutters (e.g. ASR's "Google Google").
+    for (const t of tail) {
+      const last = this.words[this.words.length - 1];
+      if (last && last.norm === t.norm) continue;
+      this.words.push(t);
     }
   }
 
