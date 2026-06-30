@@ -87,21 +87,36 @@ async def process_video(request: ProcessRequest):
     def event_stream():
         total = len(segments_in)
 
-        # 1. Batch-translate everything up front (few API calls), duration-aware.
-        logger.info("/process translating %d segments (lang=%s)", total, request.source_lang)
-        try:
-            translations = translate_timed(
-                [(seg.text, seg.duration) for seg in segments_in], request.source_lang
-            )
-            logger.info("/process translation ok: %d translations returned", len(translations))
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(
-                "/process ✗ translation failed (video_id=%s, segments=%d)",
-                request.video_id,
+        # 1. Translate — reuse cached translations when this video was already
+        # processed (same segment count) so repeat views skip the OpenAI call.
+        cached = get_cached_video(request.video_id) if request.video_id else None
+        cached_segments = (cached or {}).get("segments") or []
+
+        if cached_segments and len(cached_segments) == total:
+            translations = [
+                seg.get("translated_text") or segments_in[i].text
+                for i, seg in enumerate(cached_segments)
+            ]
+            logger.info(
+                "/process cache HIT: reusing %d translations (video_id=%s)",
                 total,
+                request.video_id,
             )
-            yield _sse({"error": f"translation failed: {type(exc).__name__}: {exc}"})
-            return
+        else:
+            logger.info("/process translating %d segments (lang=%s)", total, request.source_lang)
+            try:
+                translations = translate_timed(
+                    [(seg.text, seg.duration) for seg in segments_in], request.source_lang
+                )
+                logger.info("/process translation ok: %d translations returned", len(translations))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "/process ✗ translation failed (video_id=%s, segments=%d)",
+                    request.video_id,
+                    total,
+                )
+                yield _sse({"error": f"translation failed: {type(exc).__name__}: {exc}"})
+                return
 
         # Translate-only fast path (subtitles): stream the translated text with no
         # audio, then finish. Avoids the cost/latency of TTS when no dub is needed.
