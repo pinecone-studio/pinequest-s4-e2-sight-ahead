@@ -76,9 +76,7 @@ export default function UserDashboard() {
             dubStatus={dub.step}
             dubProgress={dub.progress}
             dubError={dub.error}
-            voiceGender={voiceGender}
             onToggleDub={toggleDub}
-            onToggleGender={toggleGender}
             processStage={processStage}
             processProgress={processProgress}
           />

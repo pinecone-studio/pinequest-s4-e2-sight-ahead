@@ -48,6 +48,7 @@ import type {
 } from "@/lib/youtube-search";
 import { useProcessedVideo } from "./useProcessedVideo";
 import { useTranslatedSubtitles } from "./useTranslatedSubtitles";
+import { VOICES, DEFAULT_VOICE_ID } from "./voices";
 import { toast } from "@/_comps/ui/Sonner";
 
 export type DashboardVideoSelection = {
@@ -195,7 +196,9 @@ export default function DashboardView({
   const [notesCollapsed, setNotesCollapsed] = useState(false);
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [dubMode, setDubMode] = useState<"mongolian" | "original">("original");
-  const [voiceGender, setVoiceGender] = useState<"male" | "female">("male");
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>(DEFAULT_VOICE_ID);
+  const [dubVolume, setDubVolume] = useState(100);
+  const [ytVolume, setYtVolume] = useState(20);
   const [query, setQuery] = useState("");
   const [searchedQuery, setSearchedQuery] = useState("");
   const [searchResults, setSearchResults] = useState<YouTubeSearchResult[]>([]);
@@ -295,6 +298,7 @@ export default function DashboardView({
   }, [fallbackItem, historyItems]);
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
+  const dub = useDubAudio(videoId, player.time, player.playing, dubMode === "mongolian", selectedVoiceId, player.playbackRate, dubVolume);
   // Fetches captions for the selected video (Path A, client-side) and exposes
   // them as `processedSegments` for the SubtitlePane to render.
   const {
@@ -303,17 +307,6 @@ export default function DashboardView({
     error: processingError,
     sourceLang,
   } = useProcessedVideo(videoId);
-  // F5 dub reuses the already-fetched captions (no extra transcript fetch) and
-  // provides BOTH the translated subtitles and the audio when dub mode is on.
-  const dub = useDubAudio(
-    videoId,
-    player.time,
-    dubMode === "mongolian",
-    processedSegments,
-    sourceLang,
-    voiceGender,
-    player.playbackRate,
-  );
   // Translate-only subtitles (Azure /process, no TTS) ONLY when dub is OFF —
   // when dub is on, useDubAudio supplies the translated subtitles instead.
   const translatedSubs = useTranslatedSubtitles(
@@ -401,11 +394,11 @@ export default function DashboardView({
   useEffect(() => {
     if (dubMode === "mongolian") {
       player.unMute();
-      player.setVolume(10);
+      player.setVolume(ytVolume);
     } else {
       player.setVolume(100);
     }
-  }, [dubMode, player.unMute, player.setVolume]);
+  }, [dubMode, ytVolume, player.unMute, player.setVolume]);
 
   // "Buffer once": while dub is on, hold the video until the current segment's
   // audio is ready, then play and don't auto-pause again — so the dub starts
@@ -855,12 +848,20 @@ export default function DashboardView({
           dubStatus={dub.step}
           dubProgress={dub.progress}
           dubError={dub.error}
-          voiceGender={voiceGender}
+          dubAvailable={processedSegments.length > 0 && !processingError}
+          voices={VOICES}
+          selectedVoiceId={selectedVoiceId}
+          dubVolume={dubVolume}
+          ytVolume={ytVolume}
           onToggleDub={handleToggleDub}
-          onToggleGender={() =>
-            setVoiceGender((g) => (g === "male" ? "female" : "male"))
-          }
-          // CHANGED: staged process overlay status for the frame loadbar
+          onSelectVoice={setSelectedVoiceId}
+          onDubVolumeChange={setDubVolume}
+          onYtVolumeChange={setYtVolume}
+          quality={player.quality}
+          availableQualities={player.availableQualities}
+          ccEnabled={player.ccEnabled}
+          onSetQuality={player.setQuality}
+          onToggleCC={player.toggleCC}
           processStage={processStage}
           processProgress={processProgress}
         />

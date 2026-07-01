@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { createDubJob, pollDubJob } from "@/lib/dub-job"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { fetchTranscript, streamProcess, base64ToBlobUrl, type StreamedSegment } from "@/lib/process-stream"
 import type { Segment } from "@/lib/backend-api"
 
 export type DubStep = "idle" | "fetching" | "translating" | "tts" | "ready" | "error"
@@ -10,106 +10,152 @@ type DubSegment = {
   start: number
   duration: number
   translatedText: string | null
-  audioUrl: string | null // public R2 URL (was base64 blob in the old Azure flow)
+  blobUrl: string | null
+  audioMs: number
 }
 
-// F5 dub. Reuses the captions already fetched by useProcessedVideo (no extra
-// RapidAPI call), sends them to the backend /jobs pipeline, and plays the
-// returned R2 audio synced to the video. Subtitles (translated_text) arrive
-// first; audio fills in once the GPU finishes.
+const MAX_OVERLAPPING_DUB_AUDIO = 2
+
+// Azure TTS streaming dub. Fetches the transcript, sends it to the backend
+// /process pipeline (translate + TTS), and plays each segment's audio synced
+// to the video. Supports pause/resume and volume control.
 export function useDubAudio(
   videoId: string,
   currentTime: number,
+  playing: boolean,
   enabled: boolean,
-  sourceSegments: Segment[],
-  sourceLang: string = "en",
-  voiceRef: string = "female", // preset voice key ("male"/"female")
+  voiceId: string,
   playbackRate: number = 1,
+  volume: number = 100,
 ) {
   const [segments, setSegments] = useState<DubSegment[]>([])
   const [step, setStep] = useState<DubStep>("idle")
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
 
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const activeIdxRef = useRef<number>(-1)
+  const activeAudiosRef = useRef<Map<number, HTMLAudioElement>>(new Map())
+  const lastStartedIdxRef = useRef<number>(-1)
   const abortRef = useRef<AbortController | null>(null)
+  const blobUrlsRef = useRef<string[]>([])
+  const flushRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const stopAllAudio = useCallback(() => {
+    activeAudiosRef.current.forEach((audio) => {
+      audio.pause()
+      audio.src = ""
+    })
+    activeAudiosRef.current.clear()
+  }, [])
+
+  const pauseAllAudio = useCallback(() => {
+    activeAudiosRef.current.forEach((audio) => {
+      audio.pause()
+    })
+  }, [])
+
+  const resumeAllAudio = useCallback(() => {
+    activeAudiosRef.current.forEach((audio) => {
+      audio.play().catch((e) => console.warn("[DubAudio] resume blocked:", e))
+    })
+  }, [])
+
+  const pruneOverlappingAudio = useCallback(() => {
+    const entries = [...activeAudiosRef.current.entries()]
+    while (entries.length > MAX_OVERLAPPING_DUB_AUDIO) {
+      const [idx, audio] = entries.shift()!
+      audio.pause()
+      audio.src = ""
+      activeAudiosRef.current.delete(idx)
+    }
+  }, [])
 
   useEffect(() => {
     return () => {
-      audioRef.current?.pause()
-      audioRef.current = null
+      if (flushRef.current) clearTimeout(flushRef.current)
+      stopAllAudio()
       abortRef.current?.abort()
     }
   }, [])
 
-  // Create the F5 dub job from the already-fetched captions, then poll for audio.
+  // Fetch transcript + stream translate/TTS when enabled or voice changes
   useEffect(() => {
-    if (!videoId || !enabled || sourceSegments.length === 0) return
+    if (!videoId || !enabled) return
 
-    audioRef.current?.pause()
-    audioRef.current = null
-    activeIdxRef.current = -1
+    stopAllAudio()
+    lastStartedIdxRef.current = -1
     abortRef.current?.abort()
     setSegments([])
     setError(null)
-    const total = sourceSegments.length
-    setProgress({ done: 0, total })
-    setStep("translating")
+    setStep("fetching")
+    setProgress(null)
 
     const controller = new AbortController()
     abortRef.current = controller
 
     void (async () => {
       try {
-        const payload = sourceSegments.map((s) => ({
-          start: s.start,
-          duration: s.duration,
-          text: s.text,
-        }))
+        const transcript = await fetchTranscript(videoId, controller.signal)
+        if (controller.signal.aborted) return
 
-        // Translation is done server-side immediately; audio (R2 URLs) is filled
-        // in once the GPU finishes (status=done).
-        const job = await createDubJob(
-          { video_id: videoId, source_lang: sourceLang, segments: payload, voice_ref: voiceRef },
+        const total = transcript.segments.length
+        const built: DubSegment[] = []
+        setStep("translating")
+        setProgress({ done: 0, total })
+
+        let ttsCompleted = 0
+
+        await streamProcess(
+          { video_id: videoId, source_lang: transcript.source_lang, segments: transcript.segments, voice: voiceId },
+          {
+            onSegment: (seg: StreamedSegment, index: number, segTotal: number) => {
+              if (controller.signal.aborted) return
+              const blobUrl = seg.audio_b64 ? base64ToBlobUrl(seg.audio_b64) : null
+              if (blobUrl) blobUrlsRef.current.push(blobUrl)
+              ttsCompleted++
+              built[index] = {
+                start: seg.offset,
+                duration: seg.duration,
+                translatedText: seg.translated_text ?? null,
+                blobUrl,
+                audioMs: seg.audio_ms,
+              }
+              // First segment: flush immediately so playback can start without delay.
+              // Subsequent segments: batch into a single render every 80ms.
+              if (ttsCompleted === 1) {
+                if (flushRef.current) clearTimeout(flushRef.current)
+                setSegments([...built].filter(Boolean).sort((a, b) => a.start - b.start))
+                setProgress({ done: 1, total: segTotal })
+                setStep("tts")
+              } else {
+                setProgress({ done: ttsCompleted, total: segTotal })
+                if (flushRef.current) clearTimeout(flushRef.current)
+                flushRef.current = setTimeout(
+                  () => setSegments([...built].filter(Boolean).sort((a, b) => a.start - b.start)),
+                  80,
+                )
+              }
+            },
+            onDone: () => {
+              if (controller.signal.aborted) return
+              if (flushRef.current) clearTimeout(flushRef.current)
+              setSegments([...built].filter(Boolean).sort((a, b) => a.start - b.start))
+              if (blobUrlsRef.current.length === 0) {
+                setError("Azure TTS audio uusgej chadsangui. Backend credentials shalgana uu.")
+                setStep("error")
+              } else {
+                setStep("ready")
+              }
+              setProgress(null)
+            },
+            onError: (msg: string) => {
+              if (controller.signal.aborted) return
+              setError(msg)
+              setStep("error")
+              setProgress(null)
+            },
+          },
           controller.signal,
         )
-        if (controller.signal.aborted) return
-
-        const applyJob = (segs: typeof job.segments) => {
-          setSegments(
-            segs.map((s) => ({
-              start: s.start,
-              duration: s.duration,
-              translatedText: s.translated_text,
-              audioUrl: s.audio_url,
-            })),
-          )
-          setProgress({ done: segs.filter((s) => s.audio_url).length, total: segs.length || total })
-        }
-
-        applyJob(job.segments) // subtitles appear now (translation ready)
-        setStep("tts")
-
-        const finalJob = await pollDubJob(job.id, {
-          signal: controller.signal,
-          onUpdate: (j) => {
-            if (!controller.signal.aborted) applyJob(j.segments)
-          },
-        })
-        if (controller.signal.aborted) return
-
-        if (finalJob.status === "failed") {
-          setError(finalJob.error || "Дуб үүсгэхэд алдаа гарлаа.")
-          setStep("error")
-          setProgress(null)
-          return
-        }
-
-        applyJob(finalJob.segments)
-        setStep(finalJob.segments.some((s) => s.audio_url) ? "ready" : "error")
-        if (!finalJob.segments.some((s) => s.audio_url)) setError("Дуб audio үүсгэж чадсангүй.")
-        setProgress(null)
       } catch (err) {
         if (controller.signal.aborted) return
         setError(err instanceof Error ? err.message : "Дуб бэлдэхэд алдаа гарлаа")
@@ -121,64 +167,81 @@ export function useDubAudio(
     return () => {
       controller.abort()
       if (abortRef.current === controller) abortRef.current = null
+      if (flushRef.current) clearTimeout(flushRef.current)
     }
-  }, [videoId, enabled, sourceSegments, sourceLang, voiceRef])
+  }, [videoId, enabled, voiceId, stopAllAudio])
 
   // Pause (but DON'T discard) the dub when the user switches back to the original
   // audio, so re-enabling plays instantly from the already-built segments. The
   // background build is left running/complete and its blobs are kept alive.
   useEffect(() => {
     if (enabled) return
-    audioRef.current?.pause()
-    audioRef.current = null
-    activeIdxRef.current = -1
+    stopAllAudio()
+    lastStartedIdxRef.current = -1
     setSegments([])
     setError(null)
     setProgress(null)
     setStep("idle")
-  }, [enabled])
+  }, [enabled, stopAllAudio])
 
+  // Apply playback rate changes to currently playing audio
   useEffect(() => {
-    if (audioRef.current) audioRef.current.playbackRate = playbackRate
+    activeAudiosRef.current.forEach((audio) => {
+      audio.playbackRate = playbackRate
+    })
   }, [playbackRate])
 
-  // Sync audio to video playback time — play the segment whose window covers now.
   useEffect(() => {
-    if (!enabled || segments.length === 0) return
+    const vol = Math.max(0, Math.min(1, volume / 100))
+    activeAudiosRef.current.forEach((audio) => {
+      audio.volume = vol
+    })
+  }, [volume])
 
-    // Start a segment's audio, speeding it up (capped at 1.5×) so the WHOLE line
-    // fits inside the segment window instead of being cut off when the next
-    // segment starts. This is why short translations matter, but this is the
-    // safety net when the dub is a bit longer than its on-screen time.
-    const startSegment = (seg: DubSegment) => {
-      if (!seg.audioUrl) return
-      const audio = new Audio(seg.audioUrl)
-      audio.playbackRate = playbackRate
-      audio.addEventListener("loadedmetadata", () => {
-        if (seg.duration > 0 && Number.isFinite(audio.duration) && audio.duration > 0) {
-          const fit = audio.duration / seg.duration
-          audio.playbackRate = Math.max(playbackRate, Math.min(playbackRate * 1.5, playbackRate * fit))
-        }
-      })
-      audioRef.current = audio
-      audio.play().catch((e) => console.warn("[DubAudio] play() blocked:", e))
+  // Pause/resume dub audio in sync with the video
+  useEffect(() => {
+    if (!enabled) return
+    if (!playing) {
+      pauseAllAudio()
+    } else {
+      resumeAllAudio()
     }
+  }, [playing, enabled, pauseAllAudio, resumeAllAudio])
+
+  // Sync audio to video playback time
+  useEffect(() => {
+    if (!enabled || !playing || segments.length === 0) return
 
     const idx = segments.findIndex(
       (s) => currentTime >= s.start && currentTime < s.start + s.duration,
     )
     if (idx === -1) return
 
-    if (idx === activeIdxRef.current) {
-      if (!audioRef.current) startSegment(segments[idx])
-      return
+    // Same segment already started for this playback pass; do not restart it.
+    if (idx === lastStartedIdxRef.current) return
+
+    const seg = segments[idx]
+    if (!seg.blobUrl) return
+
+    const audio = new Audio(seg.blobUrl)
+    const audioSeconds = seg.audioMs > 0 ? seg.audioMs / 1000 : 0
+    const targetSeconds = Math.max(0.1, seg.duration)
+    const fitRate =
+      audioSeconds > targetSeconds
+        ? Math.min(1.35, Math.max(1, audioSeconds / targetSeconds))
+        : 1
+
+    audio.volume = Math.max(0, Math.min(1, volume / 100))
+    audio.playbackRate = playbackRate * fitRate
+    audio.onended = () => {
+      activeAudiosRef.current.delete(idx)
     }
 
-    audioRef.current?.pause()
-    audioRef.current = null
-    activeIdxRef.current = idx
-    startSegment(segments[idx])
-  }, [currentTime, segments, enabled, playbackRate])
+    activeAudiosRef.current.set(idx, audio)
+    lastStartedIdxRef.current = idx
+    pruneOverlappingAudio()
+    audio.play().catch((e) => console.warn("[DubAudio] play() blocked:", e))
+  }, [currentTime, segments, enabled, playing, playbackRate, volume, pruneOverlappingAudio, stopAllAudio])
 
   // Translated lines for SubtitlePane (available as soon as translation lands).
   const translatedSegments: Segment[] = segments
@@ -194,13 +257,6 @@ export function useDubAudio(
       audio_b64: null,
     }))
 
-  // Per-segment audio readiness — lets the video buffer ONCE (wait for the first
-  // needed segment) before playing, so the dub starts from the beginning.
-  const audioSegments = segments.map((s) => ({
-    start: s.start,
-    duration: s.duration,
-    ready: Boolean(s.audioUrl),
-  }))
-
+  const audioSegments: { start: number; duration: number; ready: boolean }[] = []
   return { step, error, progress, segmentCount: segments.length, translatedSegments, audioSegments }
 }

@@ -137,6 +137,7 @@ def _local_read_user_data(user_id: str) -> dict[str, Any]:
 
 
 def _local_write_user_data(user_id: str, data: dict[str, Any]) -> None:
+    import time
     with _local_user_lock(user_id):
         path = _local_user_path(user_id)
         directory = os.path.dirname(path)
@@ -144,7 +145,21 @@ def _local_write_user_data(user_id: str, data: dict[str, Any]) -> None:
         tmp_path = os.path.join(directory, f".{_safe_user_id(user_id)}.{uuid4().hex}.tmp")
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(_normalize_local_user_data(data), f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        # On Windows, os.replace can fail with PermissionError when the target
+        # file is briefly locked by antivirus or the Windows indexer. Retry a
+        # few times before giving up.
+        for attempt in range(4):
+            try:
+                os.replace(tmp_path, path)
+                return
+            except PermissionError:
+                if attempt == 3:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+                    raise
+                time.sleep(0.05 * (attempt + 1))
 
 
 def _dump_json(model: BaseModel) -> dict[str, Any]:

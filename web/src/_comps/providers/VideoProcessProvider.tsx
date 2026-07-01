@@ -31,6 +31,7 @@ import { useYouTubePlayer } from "@/_comps/dashboard/useYouTubePlayer";
 import { useProcessedVideo } from "@/_comps/dashboard/useProcessedVideo";
 import { useTranslatedSubtitles } from "@/_comps/dashboard/useTranslatedSubtitles";
 import { useDubAudio } from "@/_comps/dashboard/useDubAudio";
+import { DEFAULT_VOICE_ID } from "@/_comps/dashboard/voices";
 import type { ProcessStage } from "@/_comps/dashboard/VideoPane";
 import type { YouTubeSearchResult } from "@/lib/youtube-search";
 import type { Segment } from "@/lib/backend-api";
@@ -140,10 +141,9 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
   const dub = useDubAudio(
     videoId,
     player.time,
+    player.playing,
     dubMode === "mongolian",
-    processedSegments,
-    sourceLang,
-    voiceGender,
+    DEFAULT_VOICE_ID,
     player.playbackRate,
   );
 
@@ -164,7 +164,8 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
   let processStage: ProcessStage = "idle";
   let processProgress: number | null = null;
   if (videoId) {
-    if (processingError || translatedSubs.error) {
+    if (processingError) {
+      // Caption fetch failed — can't show anything.
       processStage = "error";
     } else if (processingLoading) {
       processStage = "fetching";

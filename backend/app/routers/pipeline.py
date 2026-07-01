@@ -48,6 +48,7 @@ class ProcessRequest(BaseModel):
     source_lang: str = "en"
     segments: list[SegmentInput] = []
     gender: str = "female"
+    voice: str | None = None  # Azure voice ID e.g. "mn-MN-BataaNeural"; overrides gender
     # When False, translate only (no TTS) — used to populate translated subtitles
     # without paying for audio synthesis. Dub mode sends tts=True.
     tts: bool = True
@@ -479,7 +480,7 @@ async def process_video(request: ProcessRequest):
             if _bracket_only.match(mn_text):
                 return i, mn_text, "", 0
             try:
-                audio_bytes = synthesize(mn_text, {"gender": request.gender})
+                audio_bytes = synthesize(mn_text, {"voice": request.voice, "gender": request.gender})
                 audio_ms = audio_duration_ms_from_bytes(audio_bytes)
                 audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
             except Exception as exc:  # noqa: BLE001
