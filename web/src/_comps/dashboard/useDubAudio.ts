@@ -124,11 +124,11 @@ export function useDubAudio(
     }
   }, [videoId, enabled, sourceSegments, sourceLang, voiceRef])
 
-  // Clear everything when dub mode is turned off
+  // Pause (but DON'T discard) the dub when the user switches back to the original
+  // audio, so re-enabling plays instantly from the already-built segments. The
+  // background build is left running/complete and its blobs are kept alive.
   useEffect(() => {
     if (enabled) return
-    abortRef.current?.abort()
-    abortRef.current = null
     audioRef.current?.pause()
     audioRef.current = null
     activeIdxRef.current = -1
