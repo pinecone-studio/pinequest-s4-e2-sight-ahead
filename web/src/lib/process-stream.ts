@@ -165,11 +165,3 @@ export async function streamProcess(
     }
   }
 }
-
-// Decodes base64 MP3 bytes into a playable object URL.
-export function base64ToBlobUrl(b64: string, mime = "audio/mpeg"): string {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return URL.createObjectURL(new Blob([bytes], { type: mime }));
-}

@@ -53,8 +53,8 @@ export default function Page() {
       const res = await fetch(endpoint, {
         method: "GET",
         headers: {
-          "x-rapidapi-key": API_KEY,
-          "x-rapidapi-host": API_HOST,
+          "x-rapidapi-key": API_KEY ?? "",
+          "x-rapidapi-host": API_HOST ?? "",
         },
       });
       const text = await res.text();

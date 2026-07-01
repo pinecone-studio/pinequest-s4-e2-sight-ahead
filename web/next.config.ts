@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["yt-search"],
+  // yt-search (and its cheerio dependency) run server-side, not bundled.
+  serverExternalPackages: ["yt-search", "cheerio"],
   async headers() {
     return [
       {
@@ -19,7 +20,7 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "i.ytimg.com",
+        hostname: "**.ytimg.com", // i.ytimg.com, i1-i9.ytimg.com, etc.
       },
       {
         protocol: "https",
