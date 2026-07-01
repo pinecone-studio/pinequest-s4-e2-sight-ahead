@@ -5,7 +5,6 @@ import { SOURCE_LINE, type Note } from "./data"
 import { VideoFrame } from "./VideoFrame"
 import type { DubStep } from "./useDubAudio"
 import type { Voice } from "./voices"
-import { QUALITY_LABELS } from "./useYouTubePlayer"
 
 export type ProcessStage =
   | "idle"
@@ -61,7 +60,7 @@ function dubBtnLabel(status: DubStep | undefined): string {
   if (status === "tts")         return "Дуб үүсгэж байна"
   if (status === "fetching")    return "Бэлдэж байна"
   if (status === "error")       return "Алдаа гарлаа"
-  return "Монгол Дуб"
+  return "Монгол аудио орчуулга"
 }
 
 function VolumeRow({
@@ -99,10 +98,6 @@ export function VideoPane(props: VideoPaneProps) {
     props.processStage === "dubbing" ||
     props.processStage === "error"
 
-  const hasVideoSettings =
-    props.onToggleCC != null ||
-    (props.availableQualities?.length ?? 0) > 0
-
   const hasDubSettings =
     (isMongolian || isLoading) &&
     (
@@ -110,7 +105,7 @@ export function VideoPane(props: VideoPaneProps) {
       !!(props.onDubVolumeChange && props.onYtVolumeChange)
     )
 
-  const hasAnySettings = props.hasVideo && (hasVideoSettings || hasDubSettings)
+  const hasAnySettings = props.hasVideo && hasDubSettings
 
   return (
     <section className="dashboard-video-pane">
@@ -180,33 +175,6 @@ export function VideoPane(props: VideoPaneProps) {
 
           {settingsOpen && (
             <div className="settings-panel">
-              {hasVideoSettings && (
-                <div className="settings-section">
-                  <span className="settings-section-label">ВИДЕО</span>
-                  <div className="settings-row">
-                    {props.availableQualities && props.availableQualities.length > 0 && props.onSetQuality && (
-                      <select
-                        className="video-quality-select"
-                        value={props.quality ?? "auto"}
-                        onChange={(e) => props.onSetQuality!(e.target.value)}
-                      >
-                        {props.availableQualities.map((q) => (
-                          <option key={q} value={q}>{QUALITY_LABELS[q] ?? q}</option>
-                        ))}
-                      </select>
-                    )}
-                    {props.onToggleCC != null && (
-                      <button
-                        onClick={props.onToggleCC}
-                        className={`video-ctrl-btn${props.ccEnabled ? " is-on" : ""}`}
-                        title="Хаалттай тайлбар (CC)"
-                      >
-                        CC
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {hasDubSettings && (
                 <>
@@ -275,7 +243,7 @@ export function VideoPane(props: VideoPaneProps) {
           )}
 
           {props.dubStatus === "ready" && (
-            <p className="dub-ready-text">Дуб бэлэн</p>
+            <p className="dub-ready-text">Аудио орчуулга бэлэн</p>
           )}
 
           {props.dubError && (

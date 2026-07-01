@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { fetchTranscript, streamProcess, base64ToBlobUrl, type StreamedSegment } from "@/lib/process-stream"
-import { fetchCachedVideoTranscript, type Segment } from "@/lib/backend-api"
+import type { Segment } from "@/lib/backend-api"
 
 export type DubStep = "idle" | "fetching" | "translating" | "tts" | "ready" | "error"
 
@@ -19,6 +19,7 @@ const MAX_OVERLAPPING_DUB_AUDIO = 2
 export function useDubAudio(
   videoId: string,
   currentTime: number,
+  playing: boolean,
   enabled: boolean,
   voiceId: string,
   playbackRate: number = 1,
@@ -42,6 +43,18 @@ export function useDubAudio(
       audio.src = ""
     })
     activeAudiosRef.current.clear()
+  }, [])
+
+  const pauseAllAudio = useCallback(() => {
+    activeAudiosRef.current.forEach((audio) => {
+      audio.pause()
+    })
+  }, [])
+
+  const resumeAllAudio = useCallback(() => {
+    activeAudiosRef.current.forEach((audio) => {
+      audio.play().catch((e) => console.warn("[DubAudio] resume blocked:", e))
+    })
   }, [])
 
   const pruneOverlappingAudio = useCallback(() => {
@@ -87,9 +100,7 @@ export function useDubAudio(
 
     void (async () => {
       try {
-        const transcript =
-          (await fetchCachedVideoTranscript(videoId).catch(() => null)) ??
-          (await fetchTranscript(videoId))
+        const transcript = await fetchTranscript(videoId)
         if (controller.signal.aborted) return
 
         if (!transcript.segments.length) {
@@ -210,9 +221,19 @@ export function useDubAudio(
     })
   }, [volume])
 
+  // Pause/resume dub audio in sync with the video
+  useEffect(() => {
+    if (!enabled) return
+    if (!playing) {
+      pauseAllAudio()
+    } else {
+      resumeAllAudio()
+    }
+  }, [playing, enabled, pauseAllAudio, resumeAllAudio])
+
   // Sync audio to video playback time
   useEffect(() => {
-    if (!enabled || segments.length === 0) return
+    if (!enabled || !playing || segments.length === 0) return
 
     const jumped = Math.abs(currentTime - lastPlaybackTimeRef.current) > 1.5
     if (jumped) {
@@ -235,7 +256,6 @@ export function useDubAudio(
     if (!seg.blobUrl) return
 
     const audio = new Audio(seg.blobUrl)
-    const offsetSeconds = Math.max(0, currentTime - seg.start)
     const audioSeconds = seg.audioMs > 0 ? seg.audioMs / 1000 : 0
     const targetSeconds = Math.max(0.1, seg.duration)
     const fitRate =
@@ -243,11 +263,6 @@ export function useDubAudio(
         ? Math.min(1.35, Math.max(1, audioSeconds / targetSeconds))
         : 1
 
-    try {
-      audio.currentTime = offsetSeconds
-    } catch {
-      audio.currentTime = 0
-    }
     audio.volume = Math.max(0, Math.min(1, volume / 100))
     audio.playbackRate = playbackRate * fitRate
     audio.onended = () => {
@@ -258,7 +273,7 @@ export function useDubAudio(
     lastStartedIdxRef.current = idx
     pruneOverlappingAudio()
     audio.play().catch((e) => console.warn("[DubAudio] play() blocked:", e))
-  }, [currentTime, segments, enabled, playbackRate, volume, pruneOverlappingAudio, stopAllAudio])
+  }, [currentTime, segments, enabled, playing, playbackRate, volume, pruneOverlappingAudio, stopAllAudio])
 
   // Build translated segments for SubtitlePane when dub mode is active
   const translatedSegments: Segment[] = segments

@@ -649,7 +649,7 @@
   border: 1px dotted rgba(46, 61, 48, 0.6);
   border-radius: 4px;
   color: #526054;
-  font: 13px/1 Arial, sans-serif;
+  font: 18px/1 Arial, sans-serif;
   padding: 4px 8px;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
@@ -686,7 +686,7 @@
 }
 
 .settings-section-label {
-  font: 600 10px/1 Arial, sans-serif;
+  font: 700 11px/1 Arial, sans-serif;
   letter-spacing: 0.08em;
   color: #3a5040;
 }
@@ -717,9 +717,9 @@
   align-items: center;
   gap: 8px;
   padding: 7px 15px 7px 12px;
-  font: 500 13px/1 var(--font-onest), system-ui, sans-serif;
+  font: 600 14px/1 var(--font-onest), system-ui, sans-serif;
   letter-spacing: 0.01em;
-  color: #6a7d6c;
+  color: #8aa088;
   background: rgba(30, 44, 31, 0.5);
   border: 1px solid rgba(46, 61, 48, 0.9);
   border-radius: 7px;
@@ -895,8 +895,8 @@
 }
 
 .dub-vol-label {
-  font: 11px/1 Arial, sans-serif;
-  color: #526054;
+  font: 600 12px/1 Arial, sans-serif;
+  color: #7a9678;
   text-align: center;
 }
 
@@ -950,8 +950,8 @@
 }
 
 .dub-vol-value {
-  font: 11px/1 Arial, sans-serif;
-  color: #6a8070;
+  font: 600 12px/1 Arial, sans-serif;
+  color: #8aa088;
   text-align: center;
 }
 
@@ -989,8 +989,8 @@
 }
 
 .dub-voice-name {
-  font: 500 12px/1 Arial, sans-serif;
-  color: #8aa088;
+  font: 600 13px/1 Arial, sans-serif;
+  color: #a0b89e;
 }
 
 .dub-voice-card.is-selected .dub-voice-name {

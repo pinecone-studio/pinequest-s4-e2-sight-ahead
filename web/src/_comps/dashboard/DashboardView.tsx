@@ -296,7 +296,7 @@ export default function DashboardView({
   }, [fallbackItem, historyItems]);
   const segmentDuration = activeItem?.durationSeconds ?? FALLBACK_DURATION;
   const player = useYouTubePlayer(videoId, segmentDuration);
-  const dub = useDubAudio(videoId, player.time, dubMode === "mongolian", selectedVoiceId, player.playbackRate, dubVolume);
+  const dub = useDubAudio(videoId, player.time, player.playing, dubMode === "mongolian", selectedVoiceId, player.playbackRate, dubVolume);
   // Fetches captions for the selected video (Path A, client-side) and exposes
   // them as `processedSegments` for the SubtitlePane to render.
   const {
