@@ -126,16 +126,23 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
     sourceLang,
   } = useProcessedVideo(videoId);
 
+  // Translate-only subtitles run ONLY when NOT dubbing. While dubbing, the dub
+  // job (useDubAudio) already returns Mongolian text, so translating again here
+  // would double the work and let two different translations fight over the
+  // subtitle layer.
   const translatedSubs = useTranslatedSubtitles(
     videoId,
     processedSegments,
     sourceLang,
+    dubMode !== "mongolian",
   );
 
   const dub = useDubAudio(
     videoId,
     player.time,
     dubMode === "mongolian",
+    processedSegments,
+    sourceLang,
     voiceGender,
     player.playbackRate,
   );

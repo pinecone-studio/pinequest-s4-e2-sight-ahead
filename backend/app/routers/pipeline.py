@@ -342,38 +342,58 @@ async def process_video(request: ProcessRequest):
         )
 
     def event_stream():
-        total = len(segments_in)
+        input_total = len(segments_in)
+        mode = _translation_mode(request.tts)
 
-        # 1. Translate — reuse cached translations when this video was already
-        # processed (same segment count) so repeat views skip the OpenAI call.
-        cached = get_cached_video(request.video_id) if request.video_id else None
-        cached_segments = (cached or {}).get("segments") or []
-
-        if cached_segments and len(cached_segments) == total:
-            translations = [
-                seg.get("translated_text") or segments_in[i].text
-                for i, seg in enumerate(cached_segments)
-            ]
+        # 1. Translate merged sentence/groups up front. This intentionally does
+        # not preserve 1:1 caption alignment because YouTube captions often split
+        # a single sentence into several fragments.
+        translated_segments = _cached_translation_segments(request.video_id, segments_in, mode)
+        if translated_segments:
             logger.info(
-                "/process cache HIT: reusing %d translations (video_id=%s)",
-                total,
+                "/process %s translation cache hit: %d grouped segments (video_id=%s)",
+                mode,
+                len(translated_segments),
                 request.video_id,
             )
         else:
-            logger.info("/process translating %d segments (lang=%s)", total, request.source_lang)
-            try:
-                translations = translate_timed(
-                    [(seg.text, seg.duration) for seg in segments_in], request.source_lang
-                )
-                logger.info("/process translation ok: %d translations returned", len(translations))
-            except Exception as exc:  # noqa: BLE001
-                logger.exception(
-                    "/process ✗ translation failed (video_id=%s, segments=%d)",
+            translated_segments = (
+                _incoming_translated_segments(segments_in) if request.tts else None
+            )
+            if translated_segments:
+                logger.info(
+                    "/process using incoming translated subtitles for dub: %d segments (video_id=%s)",
+                    len(translated_segments),
                     request.video_id,
-                    total,
                 )
-                yield _sse({"error": f"translation failed: {type(exc).__name__}: {exc}"})
-                return
+            else:
+                logger.info(
+                    "/process translating %d source segments as %s groups (lang=%s)",
+                    input_total,
+                    mode,
+                    request.source_lang,
+                )
+                try:
+                    translated_segments = translate_timed_segments(
+                        [
+                            TimedText(start=seg.start, duration=seg.duration, text=seg.text)
+                            for seg in segments_in
+                        ],
+                        request.source_lang,
+                        fit_durations=request.tts,
+                    )
+                    logger.info(
+                        "/process translation ok: %d grouped translations returned",
+                        len(translated_segments),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "/process ✗ translation failed (video_id=%s, segments=%d)",
+                        request.video_id,
+                        input_total,
+                    )
+                    yield _sse({"error": f"translation failed: {type(exc).__name__}: {exc}"})
+                    return
 
         # Translate-only fast path (subtitles): stream the translated text with no
         # audio, then finish. Avoids the cost/latency of TTS when no dub is needed.
