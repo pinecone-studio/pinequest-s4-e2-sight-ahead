@@ -34,7 +34,8 @@ import { useDubAudio } from "@/_comps/dashboard/useDubAudio";
 import { DEFAULT_VOICE_ID, VOICES, type Voice } from "@/_comps/dashboard/voices";
 import type { ProcessStage } from "@/_comps/dashboard/VideoPane";
 import type { YouTubeSearchResult } from "@/lib/youtube-search";
-import type { Segment } from "@/lib/backend-api";
+import { recordWatchHistory, type Segment } from "@/lib/backend-api";
+import { useUI } from "@/_comps/providers/UIprovider";
 
 export type VideoActionType =
   | "searching"
@@ -113,6 +114,9 @@ export const VideoProcessContext = createContext<
 >(undefined);
 
 export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
+  // Refresh the history tab after a record lands (this provider is nested inside
+  // UIProvider, which owns the history list).
+  const { loadHistory } = useUI();
   const [videoAction, setVideoAction] = useState<VideoActionType | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<VideoSelection | null>(
     null,
@@ -358,6 +362,51 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
     }, 0);
     return () => clearTimeout(stateTimer);
   }, [processStage, videoId]);
+
+  // ── Watch history ────────────────────────────────────────────────────────
+  // Persist playback position to the backend so the history tab reflects what
+  // the user watched. Owned here because this provider is the one place that
+  // always has both the player and the selection. A ref holds the latest
+  // time/duration so the save timer doesn't get torn down on every tick.
+  const playbackRef = useRef({ time: 0, duration: 0 });
+  useEffect(() => {
+    playbackRef.current = { time: player.time, duration: player.duration };
+  }, [player.time, player.duration]);
+
+  const savePlayback = useCallback(async () => {
+    if (!videoId) return;
+    const { time, duration } = playbackRef.current;
+    try {
+      await recordWatchHistory({
+        video_id: videoId,
+        last_position_ms: Math.floor(time * 1000),
+        watched_seconds: Math.floor(time),
+        completed: duration > 0 ? time / duration >= 0.95 : false,
+        youtube_url:
+          selectedVideo?.url || `https://www.youtube.com/watch?v=${videoId}`,
+        title: selectedVideo?.title,
+        channel_name: selectedVideo?.channelTitle,
+        thumbnail_url: selectedVideo?.thumbnailUrl,
+        duration_seconds:
+          selectedVideo?.durationSeconds ||
+          (duration > 0 ? Math.floor(duration) : undefined),
+      });
+    } catch (error) {
+      console.warn("Watch history failed to save:", error);
+    }
+  }, [videoId, selectedVideo]);
+
+  // Record on select, then every 15s, and once more on unmount / video change.
+  // Refresh the history list after the first save so the tab updates live.
+  useEffect(() => {
+    if (!videoId) return;
+    void savePlayback().then(() => loadHistory());
+    const intervalId = window.setInterval(() => void savePlayback(), 15000);
+    return () => {
+      window.clearInterval(intervalId);
+      void savePlayback();
+    };
+  }, [savePlayback, videoId, loadHistory]);
 
   const value: VideoProcessContextType = {
     videoAction,

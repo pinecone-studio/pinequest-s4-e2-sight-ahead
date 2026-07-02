@@ -8,6 +8,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { Loader2, Search } from "lucide-react";
 import type {
   YouTubeChannelSearchResult,
   YouTubeSearchResult,
@@ -226,9 +227,17 @@ export default function SearchBox({ onSubmit, UI }: SearchBoxProps) {
           } ${atTop ? "max-h-0 opacity-0 mb-0" : "max-h-40 opacity-100 mb-6"}`}
         >
           <p className="text-muted-foreground text-sm sm:text-base max-w-lg mx-auto">
-            YouTube-ээс видео, channel, playlist хайж, монгол хувилбарт бэлтгэх
-            бичлэгээ сонго.
+            Хүссэн бичлэгээ эх хэлээрээ үз
           </p>
+        </div>
+      )}
+
+      {!isHeader && atTop && isSearching && (
+        <div className="flex justify-center mb-4">
+          <div className="relative flex items-center justify-center w-11 h-11">
+            <Loader2 className="absolute w-11 h-11 animate-spin text-primary/40" />
+            <Search className="w-4 h-4 text-primary animate-pulse" />
+          </div>
         </div>
       )}
 
