@@ -144,6 +144,7 @@ export async function streamProcess(
     source_lang: string;
     segments: TranscriptSegment[];
     gender?: string;
+    voice?: string;
     tts?: boolean; // false = translate-only (subtitles), no audio synthesis
   },
   handlers: StreamHandlers,
@@ -190,6 +191,7 @@ export async function streamProcess(
   let buffer = "";
 
   while (true) {
+    if (signal?.aborted) { reader.cancel(); break; }
     const { done, value } = await reader.read();
     if (done) break;
 
@@ -228,5 +230,18 @@ export async function streamProcess(
         handlers.onSegment(msg.segment, msg.index ?? 0, msg.total ?? 0);
       }
     }
+  }
+}
+
+// Decodes base64 MP3 bytes into a playable object URL.
+export function base64ToBlobUrl(b64: string, mime = "audio/mpeg"): string | null {
+  try {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: mime }));
+  } catch (err) {
+    console.error("[base64ToBlobUrl] decode failed:", err);
+    return null;
   }
 }

@@ -31,6 +31,7 @@ import { useYouTubePlayer } from "@/_comps/dashboard/useYouTubePlayer";
 import { useProcessedVideo } from "@/_comps/dashboard/useProcessedVideo";
 import { useTranslatedSubtitles } from "@/_comps/dashboard/useTranslatedSubtitles";
 import { useDubAudio } from "@/_comps/dashboard/useDubAudio";
+import { DEFAULT_VOICE_ID, VOICES, type Voice } from "@/_comps/dashboard/voices";
 import type { ProcessStage } from "@/_comps/dashboard/VideoPane";
 import type { YouTubeSearchResult } from "@/lib/youtube-search";
 import type { Segment } from "@/lib/backend-api";
@@ -90,6 +91,9 @@ interface VideoProcessContextType {
   toggleDub: () => void;
   voiceGender: VoiceGender;
   toggleGender: () => void;
+  voices: Voice[];
+  selectedVoiceId: string;
+  selectVoice: (id: string) => void;
   dub: ReturnType<typeof useDubAudio>;
 }
 
@@ -102,8 +106,11 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
   const [selectedVideo, setSelectedVideo] = useState<VideoSelection | null>(
     null,
   );
-  const [dubMode, setDubMode] = useState<DubMode>("original");
+  // Dub is ON by default — selecting a video should translate + dub in one pass
+  // (the subtitle-only translate path stays idle while dubbing, see below).
+  const [dubMode, setDubMode] = useState<DubMode>("mongolian");
   const [voiceGender, setVoiceGender] = useState<VoiceGender>("male");
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>(DEFAULT_VOICE_ID);
 
   const [searchResults, setSearchResults] = useState<YouTubeSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -140,10 +147,11 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
   const dub = useDubAudio(
     videoId,
     player.time,
+    player.playing,
     dubMode === "mongolian",
     processedSegments,
     sourceLang,
-    voiceGender,
+    selectedVoiceId,
     player.playbackRate,
   );
 
@@ -164,7 +172,8 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
   let processStage: ProcessStage = "idle";
   let processProgress: number | null = null;
   if (videoId) {
-    if (processingError || translatedSubs.error) {
+    if (processingError) {
+      // Caption fetch failed — can't show anything.
       processStage = "error";
     } else if (processingLoading) {
       processStage = "fetching";
@@ -290,6 +299,8 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
     [],
   );
 
+  const selectVoice = useCallback((id: string) => setSelectedVoiceId(id), []);
+
   // Keep the state machine in sync with the pipeline: while it's fetching /
   // translating / dubbing the selected video, we're "processing"; when it settles
   // (ready or idle) and we weren't mid-search, clear the action.
@@ -333,6 +344,9 @@ export const VideoProcessProvider = ({ children }: { children: ReactNode }) => {
     toggleDub,
     voiceGender,
     toggleGender,
+    voices: VOICES,
+    selectedVoiceId,
+    selectVoice,
     dub,
   };
 
