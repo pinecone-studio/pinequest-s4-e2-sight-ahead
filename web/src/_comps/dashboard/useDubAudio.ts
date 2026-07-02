@@ -20,6 +20,8 @@ export type DubStep =
 type DubSegment = {
   start: number;
   duration: number;
+  originalText: string; // source-language caption (e.g. English) — kept so the
+  // subtitle can flip between mn/en on click.
   translatedText: string | null;
   blobUrl: string | null;
   audioMs: number;
@@ -233,6 +235,7 @@ export function useDubAudio(
               built[index] = {
                 start: seg.offset,
                 duration: seg.duration,
+                originalText: seg.text ?? "",
                 translatedText: seg.translated_text ?? null,
                 blobUrl,
                 audioMs: seg.audio_ms,
@@ -527,7 +530,10 @@ export function useDubAudio(
     .map((s) => ({
       start: s.start,
       duration: s.duration,
-      text: s.translatedText!,
+      // Keep the ORIGINAL (source-language, e.g. English) here so the subtitle
+      // overlay can flip to it on click. The Mongolian version is exposed via
+      // `translated_text` separately.
+      text: s.originalText,
       source: "youtube_captions" as const,
       translated_text: s.translatedText,
       audio_path: null,
