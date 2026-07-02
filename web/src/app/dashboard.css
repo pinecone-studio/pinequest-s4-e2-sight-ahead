@@ -587,6 +587,8 @@
   bottom: 6%;
   display: flex;
   justify-content: center;
+  /* Overlay itself doesn't intercept clicks, but the pane inside DOES so the
+     user can tap the subtitle to flip it. */
   pointer-events: none;
   padding: 0 6%;
   z-index: 5;
@@ -604,6 +606,48 @@
   border: 0;
   background: transparent;
   border-radius: 0;
+  /* 3D perspective for the flip animation. */
+  perspective: 1400px;
+  cursor: pointer;
+  pointer-events: auto; /* re-enable clicks (overlay above turns them off) */
+  outline: none;
+}
+
+.dashboard-subtitle-pane:focus-visible {
+  box-shadow: 0 0 0 2px rgba(126, 220, 130, 0.55);
+  border-radius: 4px;
+}
+
+/* The subtitle line now stays on screen through the silence between voice
+   segments — it swaps directly to the next line when the next audio starts.
+   (Ghost fade-out was removed; the previous behaviour left the video empty
+   during the gap.) */
+
+.dashboard-subtitle-flip {
+  position: relative;
+  transform-style: preserve-3d;
+  /* "Hoishoo ergej" — backward rotation on the X axis. Easing is a soft
+     over-then-settle curve so the flip lands cleanly. */
+  transition: transform 0.55s cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.dashboard-subtitle-flip.is-flipped {
+  transform: rotateX(180deg);
+}
+
+.dashboard-subtitle-face {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  min-width: 1px;
+}
+
+.dashboard-subtitle-face-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateX(180deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .dashboard-subtitle-text {
@@ -636,6 +680,97 @@
     0 2px 6px rgba(0, 0, 0, 0.6),
     0 0 10px rgba(126, 220, 130, 0.7),
     0 0 18px rgba(80, 200, 100, 0.35);
+}
+
+/* Word double-click affordance: hover ring so the user knows the word is
+   interactive, plus an outline pulse on the currently-targeted word. */
+.dashboard-subtitle-face-front .dashboard-subtitle-word {
+  cursor: pointer;
+  padding: 0 1px;
+  border-radius: 3px;
+  position: relative;
+}
+
+.dashboard-subtitle-face-front .dashboard-subtitle-word:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dashboard-subtitle-word.is-target {
+  background: rgba(126, 220, 130, 0.22);
+  box-shadow: 0 0 0 1px rgba(126, 220, 130, 0.6);
+}
+
+/* In-place word translation: while the OpenAI lookup is in flight the word
+   pulses gently, then swaps to its translation with a soft flip-scale motion
+   so the reader clearly sees the change. */
+.dashboard-subtitle-word.is-translating {
+  color: rgba(126, 220, 130, 0.85);
+  animation: subtitleWordPulse 1s ease-in-out infinite;
+}
+
+/* "Ghost" translated word — semi-transparent, softly glowing, and floating
+   gently so it reads as an ephemeral hint rather than part of the sentence.
+   Double-click again to swap it back to the original. */
+.dashboard-subtitle-word.is-translated {
+  color: rgba(234, 255, 224, 0.62);
+  font-style: italic;
+  text-shadow:
+    0 0 6px rgba(126, 220, 130, 0.35),
+    0 0 14px rgba(126, 220, 130, 0.22),
+    0 0 22px rgba(80, 200, 100, 0.14);
+  cursor: pointer;
+  animation:
+    subtitleWordSwap 0.32s cubic-bezier(0.16, 1, 0.3, 1),
+    subtitleWordGhost 3.2s ease-in-out 0.32s infinite;
+  border-bottom: none;
+}
+
+.dashboard-subtitle-word.is-translated:hover {
+  color: rgba(234, 255, 224, 0.9);
+  text-shadow:
+    0 0 8px rgba(126, 220, 130, 0.55),
+    0 0 18px rgba(80, 200, 100, 0.35);
+}
+
+/* Subtle floating opacity to sell the "ghost" feel. */
+@keyframes subtitleWordGhost {
+  0%, 100% {
+    opacity: 0.72;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 0.95;
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes subtitleWordPulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+@keyframes subtitleWordSwap {
+  0%   { transform: translateY(-4px) scale(0.9); opacity: 0; }
+  60%  { transform: translateY(1px)  scale(1.05); opacity: 1; }
+  100% { transform: translateY(0)    scale(1);   opacity: 1; }
+}
+
+:root:not(.dark) .dashboard-subtitle-word.is-translating {
+  color: rgba(60, 160, 80, 0.85);
+}
+
+:root:not(.dark) .dashboard-subtitle-word.is-translated {
+  color: rgba(26, 90, 36, 0.62);
+  text-shadow:
+    0 0 6px rgba(255, 255, 255, 0.5),
+    0 0 12px rgba(126, 220, 130, 0.42),
+    0 0 20px rgba(60, 160, 80, 0.2);
+}
+:root:not(.dark) .dashboard-subtitle-word.is-translated:hover {
+  color: rgba(26, 90, 36, 0.95);
+  text-shadow:
+    0 0 8px rgba(255, 255, 255, 0.65),
+    0 0 18px rgba(60, 160, 80, 0.45);
 }
 
 /* Fullscreen toggle sits in the top-right corner of the video; matches the
